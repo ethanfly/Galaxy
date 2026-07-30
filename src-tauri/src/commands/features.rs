@@ -80,18 +80,42 @@ pub struct AgentScanResult {
 }
 
 #[tauri::command]
+/// `full` (default true): ignore the incremental watermark and rebuild the
+/// project cache so history cannot vanish when the panel re-scans.
 pub async fn agent_scan(
     state: State<'_, Arc<AppState>>,
     project_path: String,
+    full: Option<bool>,
 ) -> CmdResult<AgentScanResult> {
+    // Cancel any in-flight scan so its watermark/cache commit is skipped.
+    if let Some(prev) = state.scan_token.lock().as_ref() {
+        prev.store(true, Ordering::SeqCst);
+    }
     let state = state.inner().clone();
     let cancel: Arc<std::sync::atomic::AtomicBool> =
         Arc::new(std::sync::atomic::AtomicBool::new(false));
     *state.scan_token.lock() = Some(cancel.clone());
     let state2 = state.clone();
     let path = project_path.clone();
+    // Default to full rescan: UI always replaces its list with the command
+    // result, so incremental-only responses would hide prior history.
+    let full = full.unwrap_or(true);
     let result = tauri::async_runtime::spawn_blocking(move || {
-        state2.agents.scan_project(&path, &cancel)
+        // catch_unwind so a single adapter bug cannot take down the whole app
+        // when release uses panic=unwind (and never becomes a silent 闪退).
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if full {
+                state2.agents.scan_project_full(&path, &cancel)
+            } else {
+                state2.agents.scan_project(&path, &cancel)
+            }
+        })) {
+            Ok(r) => r,
+            Err(_) => {
+                tracing::error!("agent scan panicked; returning empty result");
+                (Vec::new(), Vec::new())
+            }
+        }
     })
     .await
     .map_err(|e| CmdError::new("INTERNAL", format!("扫描任务失败: {e}")))?;

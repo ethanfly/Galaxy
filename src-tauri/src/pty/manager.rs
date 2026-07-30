@@ -4,16 +4,19 @@
 //! signals bypass batching and are written directly.
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use parking_lot::Mutex;
 use serde::Serialize;
 
 use super::backend::{PtyBackend, PtyProcess, PtySpec};
 use super::decode::StreamDecoder;
 use super::ring::{Replay, RingBuffer, RingChunk};
-use super::tracker::{infer_agent_status, make_block, push_tail, strip_ansi, PaneTracker};
+use super::tracker::{
+    infer_agent_status, make_block, push_tail, strip_ansi, InputLineTracker, PaneTracker,
+};
 use crate::core::models::{AgentKind, AgentStatus};
 use crate::core::trigger::{Trigger, TriggerAction};
 use crate::error::AppError;
@@ -89,7 +92,8 @@ struct PaneCtx {
     tracker: PaneTracker,
     tail: String,
     trigger_line: String,
-    input_line: String,
+    /// Typed command buffer; ignores focus/CSI sequences from xterm onData.
+    input: InputLineTracker,
     last_status: AgentStatus,
     last_status_at: Instant,
     trigger_cooldowns: HashMap<String, Instant>,
@@ -173,7 +177,7 @@ impl PtyManager {
                 }
             })
             .collect();
-        *self.triggers.lock().unwrap() = compiled;
+        *self.triggers.lock() = compiled;
     }
 
     pub fn spawn_pane(
@@ -188,7 +192,7 @@ impl PtyManager {
         let mut process = self.backend.spawn(spec)?;
         let mut reader = process.take_reader()?;
 
-        self.panes.lock().unwrap().insert(
+        self.panes.lock().insert(
             pane_id.to_string(),
             PaneCtx {
                 session_id: session_id.to_string(),
@@ -198,7 +202,7 @@ impl PtyManager {
                 tracker: PaneTracker::default(),
                 tail: String::new(),
                 trigger_line: String::new(),
-                input_line: String::new(),
+                input: InputLineTracker::default(),
                 last_status: AgentStatus::Idle,
                 last_status_at: Instant::now(),
                 trigger_cooldowns: HashMap::new(),
@@ -260,7 +264,7 @@ impl PtyManager {
             })
             .map_err(|e| AppError::Pty(format!("启动读取线程失败: {e}")))?;
 
-        self.processes.lock().unwrap().insert(
+        self.processes.lock().insert(
             pane_id.to_string(),
             ProcessEntry { process: Mutex::new(process), _reader: reader_handle },
         );
@@ -282,81 +286,70 @@ impl PtyManager {
     /// command blocks and title fallbacks can attribute commands.
     pub fn write_input(&self, pane_id: &str, data: &str) -> Result<(), AppError> {
         {
-            let mut panes = self.panes.lock().unwrap();
+            let mut panes = self.panes.lock();
             if let Some(ctx) = panes.get_mut(pane_id) {
-                for ch in data.chars() {
-                    match ch {
-                        '\r' => {
-                            let line = std::mem::take(&mut ctx.input_line);
-                            // Agent badge: recognize agent executables.
-                            if let Some(kind) = super::tracker::detect_agent_kind(&line) {
-                                if ctx.agent_kind != Some(kind) {
-                                    ctx.agent_kind = Some(kind);
-                                    let sid = ctx.session_id.clone();
-                                    let status = ctx.last_status;
-                                    self.sink.agent_status(pane_id, &sid, kind, status);
-                                }
-                            }
-                            if ctx.tracker.shell_integration {
-                                // OSC 133 B/C/D will open/close blocks; just stash the line.
-                                ctx.tracker.note_input_submission(Some(line));
-                            } else {
-                                // Heuristic path (PowerShell/cmd without shell integration):
-                                // 1) close previous block (if any)
-                                // 2) open a new block with this command text
-                                // Previously we cleared pending_command with None, so commands
-                                // were never attributed and history stayed empty.
-                                if let Some((cmd, out, code)) = ctx.tracker.close_block(None) {
-                                    if !out.is_empty() || !cmd.is_empty() {
-                                        let block = make_block(
-                                            &ctx.project_id,
-                                            &ctx.session_id,
-                                            pane_id,
-                                            cmd,
-                                            out,
-                                            code,
-                                        );
-                                        self.sink.block_completed(&block);
-                                    }
-                                }
-                                if !line.trim().is_empty() {
-                                    ctx.tracker.begin_heuristic_block(line);
-                                }
-                            }
+                // Parse the full chunk once so CSI sequences (focus in/out
+                // ESC[I / ESC[O, arrows, etc.) never leak into history.
+                if let Some(line) = ctx.input.feed(data) {
+                    ctx.tracker.touch();
+                    // Agent badge: recognize agent executables.
+                    if let Some(kind) = super::tracker::detect_agent_kind(&line) {
+                        if ctx.agent_kind != Some(kind) {
+                            ctx.agent_kind = Some(kind);
+                            let sid = ctx.session_id.clone();
+                            let status = ctx.last_status;
+                            self.sink.agent_status(pane_id, &sid, kind, status);
                         }
-                        '\u{7f}' | '\u{8}' => {
-                            ctx.input_line.pop();
-                            ctx.tracker.touch();
-                        }
-                        c if !c.is_control() => {
-                            ctx.input_line.push(c);
-                            ctx.tracker.touch();
-                        }
-                        _ => {}
                     }
+                    if ctx.tracker.shell_integration {
+                        // OSC 133 B/C/D will open/close blocks; just stash the line.
+                        ctx.tracker.note_input_submission(Some(line));
+                    } else {
+                        // Heuristic path (PowerShell/cmd without shell integration):
+                        // 1) close previous block (if any)
+                        // 2) open a new block with this command text
+                        if let Some((cmd, out, code)) = ctx.tracker.close_block(None) {
+                            if !out.is_empty() || !cmd.is_empty() {
+                                let block = make_block(
+                                    &ctx.project_id,
+                                    &ctx.session_id,
+                                    pane_id,
+                                    cmd,
+                                    out,
+                                    code,
+                                );
+                                self.sink.block_completed(&block);
+                            }
+                        }
+                        if !line.trim().is_empty() {
+                            ctx.tracker.begin_heuristic_block(line);
+                        }
+                    }
+                } else if !data.is_empty() {
+                    ctx.tracker.touch();
                 }
             }
         }
-        let processes = self.processes.lock().unwrap();
+        let processes = self.processes.lock();
         let entry = processes
             .get(pane_id)
             .ok_or_else(|| AppError::Pty("pane 对应的终端进程不存在".into()))?;
-        let mut guard = entry.process.lock().unwrap();
+        let mut guard = entry.process.lock();
         guard.write(data.as_bytes())
     }
 
     pub fn resize(&self, pane_id: &str, cols: u16, rows: u16) -> Result<(), AppError> {
-        let processes = self.processes.lock().unwrap();
+        let processes = self.processes.lock();
         if let Some(entry) = processes.get(pane_id) {
-            entry.process.lock().unwrap().resize(cols, rows)?;
+            entry.process.lock().resize(cols, rows)?;
         }
         Ok(())
     }
 
     pub fn kill(&self, pane_id: &str) -> Result<(), AppError> {
-        let entry = self.processes.lock().unwrap().remove(pane_id);
+        let entry = self.processes.lock().remove(pane_id);
         if let Some(entry) = entry {
-            let mut proc = entry.process.lock().unwrap();
+            let mut proc = entry.process.lock();
             let _ = proc.kill();
         }
         Ok(())
@@ -364,11 +357,11 @@ impl PtyManager {
 
     pub fn unregister(&self, pane_id: &str) {
         let _ = self.kill(pane_id);
-        self.panes.lock().unwrap().remove(pane_id);
+        self.panes.lock().remove(pane_id);
     }
 
     pub fn replay(&self, pane_id: &str, after_seq: u64) -> ReplayDto {
-        let panes = self.panes.lock().unwrap();
+        let panes = self.panes.lock();
         let Some(ctx) = panes.get(pane_id) else {
             return ReplayDto { pane_id: pane_id.into(), truncated: false, from_seq: None, chunks: vec![] };
         };
@@ -398,18 +391,17 @@ impl PtyManager {
     pub fn pane_tail(&self, pane_id: &str) -> String {
         self.panes
             .lock()
-            .unwrap()
             .get(pane_id)
             .map(|c| c.tail.clone())
             .unwrap_or_default()
     }
 
     pub fn is_alive(&self, pane_id: &str) -> bool {
-        self.processes.lock().unwrap().contains_key(pane_id)
+        self.processes.lock().contains_key(pane_id)
     }
 
     pub fn mark_exit(&self, pane_id: &str, code: Option<i32>) {
-        let mut panes = self.panes.lock().unwrap();
+        let mut panes = self.panes.lock();
         if let Some(ctx) = panes.get_mut(pane_id) {
             ctx.exit_code = code;
             if let Some(kind) = ctx.agent_kind {
@@ -470,7 +462,7 @@ impl PtyManager {
     ) {
         let mut completed: Vec<(String, crate::core::models::CommandBlock)> = Vec::new();
         {
-            let mut panes_guard = panes.lock().unwrap();
+            let mut panes_guard = panes.lock();
             for (pane_id, ctx) in panes_guard.iter_mut() {
                 if !ctx.tracker.idle_block_ready(HEURISTIC_IDLE_FLUSH) {
                     continue;
@@ -527,9 +519,9 @@ impl PtyManager {
 
         let mut batch = OutputBatch { chunks: Vec::new() };
         {
-            let mut panes_guard = panes.lock().unwrap();
+            let mut panes_guard = panes.lock();
             // Snapshot triggers outside the loop to avoid lock churn.
-            let trigger_list = triggers.lock().unwrap().clone();
+            let trigger_list = triggers.lock().clone();
             for pane_id in &order {
                 let Some(ctx) = panes_guard.get_mut(pane_id) else { continue };
                 let data = grouped.get(pane_id).unwrap();
@@ -589,23 +581,22 @@ impl PtyManager {
 
         // Injections (resume commands) bypass user-input tracking.
         for (pane_id, data) in injects {
-            let procs = processes.lock().unwrap();
+            let procs = processes.lock();
             if let Some(entry) = procs.get(&pane_id) {
-                if let Ok(mut p) = entry.process.lock() {
-                    let _ = p.write(data.as_bytes());
-                }
+                let mut p = entry.process.lock();
+                let _ = p.write(data.as_bytes());
             }
         }
 
         for pane_id in eofs {
             std::thread::sleep(Duration::from_millis(10));
             let code = {
-                let procs = processes.lock().unwrap();
+                let procs = processes.lock();
                 procs
                     .get(&pane_id)
-                    .and_then(|e| e.process.lock().ok()?.try_wait().ok().flatten())
+                    .and_then(|e| e.process.lock().try_wait().ok().flatten())
             };
-            if let Some(ctx) = panes.lock().unwrap().get_mut(&pane_id) {
+            if let Some(ctx) = panes.lock().get_mut(&pane_id) {
                 ctx.exit_code = code;
                 // Flush any open command block on process exit.
                 if let Some((cmd, out, _)) = ctx.tracker.close_block(code) {
@@ -622,7 +613,7 @@ impl PtyManager {
                     }
                 }
             }
-            processes.lock().unwrap().remove(&pane_id);
+            processes.lock().remove(&pane_id);
             sink.exit(&pane_id, code);
         }
     }
@@ -669,12 +660,14 @@ impl PtyManager {
     }
 
     pub fn shutdown(&self) {
-        self.shutdown.store(true, Ordering::SeqCst);
-        let mut processes = self.processes.lock().unwrap();
+        // Idempotent: CloseRequested + Destroyed + Drop may all call this.
+        if self.shutdown.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let mut processes = self.processes.lock();
         for (_, entry) in processes.drain() {
-            if let Ok(mut p) = entry.process.lock() {
-                let _ = p.kill();
-            }
+            let mut p = entry.process.lock();
+            let _ = p.kill();
         }
     }
 }

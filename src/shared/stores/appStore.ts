@@ -249,7 +249,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   async setConfig(config) {
     try {
       await ipc.configUpdate(config);
-      set({ config });
+      set({ config, error: null });
       return true;
     } catch (e) {
       set({ error: (e as Error).message });

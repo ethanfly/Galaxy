@@ -8,6 +8,7 @@ use parking_lot::RwLock;
 
 use crate::core::models::CommandBlock;
 use crate::error::AppError;
+use crate::pty::tracker::sanitize_command;
 
 pub const BLOCK_CAP: usize = 500;
 pub const FAVORITE_SOFT_CAP: usize = 500;
@@ -112,8 +113,17 @@ impl BlockStore {
     pub fn list(&self, session_id: Option<&str>) -> BlockListResult {
         let blocks = self.blocks.read();
         let filtered: Vec<CommandBlock> = match session_id {
-            Some(sid) => blocks.iter().filter(|b| b.session_id == sid).cloned().collect(),
-            None => blocks.clone(),
+            Some(sid) => blocks
+                .iter()
+                .filter(|b| b.session_id == sid)
+                .cloned()
+                .map(sanitize_block_for_display)
+                .collect(),
+            None => blocks
+                .iter()
+                .cloned()
+                .map(sanitize_block_for_display)
+                .collect(),
         };
         BlockListResult {
             blocks: filtered,
@@ -129,11 +139,14 @@ impl BlockStore {
             .iter()
             .filter(|b| !favorites_only || b.favorite)
             .filter(|b| {
+                let cmd = sanitize_command(&b.command);
                 q.is_empty()
+                    || cmd.to_lowercase().contains(&q)
                     || b.command.to_lowercase().contains(&q)
                     || b.output.to_lowercase().contains(&q)
             })
             .cloned()
+            .map(sanitize_block_for_display)
             .collect()
     }
 
@@ -175,6 +188,12 @@ impl BlockStore {
         self.enforce_caps();
         self.persist_all()
     }
+}
+
+/// Repair legacy blocks that stored xterm focus leftovers (`[I[O…`) in command.
+fn sanitize_block_for_display(mut b: CommandBlock) -> CommandBlock {
+    b.command = sanitize_command(&b.command);
+    b
 }
 
 #[cfg(test)]

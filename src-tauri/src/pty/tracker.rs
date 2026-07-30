@@ -52,6 +52,122 @@ pub fn strip_ansi(input: &str) -> String {
     out
 }
 
+/// xterm focus reporting (`ESC [ I` / `ESC [ O`) is delivered via `onData`.
+/// If ESC is dropped but brackets remain, history shows `[I[O…` garbage.
+/// Strip leading leftovers and any residual control bytes from a command.
+pub fn sanitize_command(cmd: &str) -> String {
+    let stripped = strip_ansi(cmd);
+    let mut s = stripped.trim().to_string();
+    // Focus leftovers after ESC was eaten char-by-char into the input buffer.
+    loop {
+        if s.starts_with("[I") || s.starts_with("[O") {
+            s = s[2..].to_string();
+            continue;
+        }
+        // Bracketed paste / incomplete CSI fragments at start: ESC already gone.
+        if s.starts_with("[200~") {
+            s = s[5..].to_string();
+            continue;
+        }
+        if s.ends_with("[201~") {
+            s.truncate(s.len() - 5);
+            continue;
+        }
+        break;
+    }
+    s.chars().filter(|c| !c.is_control() || *c == '\t').collect()
+}
+
+/// Tracks typed command text from PTY input, ignoring escape sequences
+/// (focus in/out, cursor keys, mouse, bracketed paste markers, etc.).
+#[derive(Debug, Default)]
+pub struct InputLineTracker {
+    buf: String,
+    esc: InputEsc,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+enum InputEsc {
+    #[default]
+    Norm,
+    Esc,
+    /// CSI: ESC [
+    Csi,
+    /// OSC: ESC ]
+    Osc,
+    OscEsc,
+    /// SS3 / application keypad: ESC O + one final byte
+    Ss3,
+}
+
+impl InputLineTracker {
+    /// Feed raw `onData` bytes. Returns a submitted line when Enter (`\r`) is seen.
+    pub fn feed(&mut self, data: &str) -> Option<String> {
+        let mut submitted = None;
+        for ch in data.chars() {
+            match self.esc {
+                InputEsc::Norm => match ch {
+                    '\r' => {
+                        let line = std::mem::take(&mut self.buf);
+                        let clean = sanitize_command(&line);
+                        if !clean.is_empty() {
+                            submitted = Some(clean);
+                        } else {
+                            // Empty enter still ends the line buffer.
+                            submitted = submitted.or(Some(String::new()));
+                        }
+                    }
+                    '\n' => {}
+                    '\u{7f}' | '\u{8}' => {
+                        self.buf.pop();
+                    }
+                    '\u{1b}' => self.esc = InputEsc::Esc,
+                    // Tab is meaningful for completion display; keep it out of
+                    // finalized commands but allow mid-line editing fidelity.
+                    '\t' => self.buf.push('\t'),
+                    c if c.is_control() => {}
+                    c => self.buf.push(c),
+                },
+                InputEsc::Esc => match ch {
+                    '[' => self.esc = InputEsc::Csi,
+                    ']' => self.esc = InputEsc::Osc,
+                    'O' => self.esc = InputEsc::Ss3,
+                    // Single-char ESC sequence (e.g. ESC alone + letter) — drop.
+                    _ => self.esc = InputEsc::Norm,
+                },
+                InputEsc::Csi => {
+                    // CSI final byte is 0x40–0x7E (@ through ~).
+                    if matches!(ch, '@'..='~') {
+                        self.esc = InputEsc::Norm;
+                    }
+                }
+                InputEsc::Osc => match ch {
+                    '\u{7}' => self.esc = InputEsc::Norm,
+                    '\u{1b}' => self.esc = InputEsc::OscEsc,
+                    _ => {}
+                },
+                InputEsc::OscEsc => {
+                    self.esc = if ch == '\\' {
+                        InputEsc::Norm
+                    } else {
+                        InputEsc::Osc
+                    };
+                }
+                InputEsc::Ss3 => {
+                    // One final character after ESC O.
+                    self.esc = InputEsc::Norm;
+                }
+            }
+        }
+        submitted
+    }
+
+    pub fn clear(&mut self) {
+        self.buf.clear();
+        self.esc = InputEsc::Norm;
+    }
+}
+
 /// Append to a capped tail buffer.
 pub fn push_tail(tail: &mut String, data: &str) {
     tail.push_str(data);
@@ -398,8 +514,8 @@ pub fn make_block(
         project_id: project_id.to_string(),
         session_id: session_id.to_string(),
         pane_id: pane_id.to_string(),
-        command,
-        output: output.trim().to_string(),
+        command: sanitize_command(&command),
+        output: strip_ansi(output.trim()),
         started_at: crate::core::models::now_rfc3339(),
         ended_at: Some(crate::core::models::now_rfc3339()),
         exit_code,
@@ -461,6 +577,31 @@ mod tests {
     fn strip_ansi_removes_sequences() {
         let s = strip_ansi("\u{1b}[32mhello\u{1b}[0m \u{1b}]0;t\u{7}world");
         assert_eq!(s, "hello world");
+    }
+
+    #[test]
+    fn input_tracker_ignores_focus_and_cursor_sequences() {
+        let mut t = InputLineTracker::default();
+        // Focus in/out then type "grok" + Enter — must not become "[I[Ogrok".
+        assert!(t.feed("\u{1b}[I\u{1b}[O").is_none());
+        assert!(t.feed("grok").is_none());
+        assert_eq!(t.feed("\r").as_deref(), Some("grok"));
+    }
+
+    #[test]
+    fn input_tracker_ignores_arrow_keys() {
+        let mut t = InputLineTracker::default();
+        t.feed("echo ");
+        t.feed("\u{1b}[A"); // CSI up
+        t.feed("\u{1b}OA"); // SS3 up
+        t.feed("hi");
+        assert_eq!(t.feed("\r").as_deref(), Some("echo hi"));
+    }
+
+    #[test]
+    fn sanitize_command_strips_focus_leftovers() {
+        assert_eq!(sanitize_command("[I[O[I[Ogrok"), "grok");
+        assert_eq!(sanitize_command("\u{1b}[32mnpm test\u{1b}[0m"), "npm test");
     }
 
     #[test]

@@ -2,8 +2,9 @@
 //! Unix a forkpty, behind the same `PtyBackend` interface.
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use parking_lot::Mutex;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, PtySystem};
 
 use super::backend::{PtyBackend, PtyProcess, PtySpec};
@@ -32,7 +33,7 @@ impl PtyBackend for PortablePtyBackend {
     }
 
     fn spawn(&self, spec: &PtySpec) -> Result<Box<dyn PtyProcess>, AppError> {
-        let system = self.system.lock().map_err(|_| AppError::Pty("PTY 系统锁失效".into()))?;
+        let system = self.system.lock();
         let pair = system
             .openpty(PtySize {
                 rows: spec.rows.max(2),
@@ -98,7 +99,7 @@ impl PtyProcess for PortablePtyProcess {
     }
 
     fn write(&mut self, data: &[u8]) -> Result<(), AppError> {
-        let mut guard = self.writer.lock().map_err(|_| AppError::Pty("写入器锁失效".into()))?;
+        let mut guard = self.writer.lock();
         if guard.is_none() {
             let w = self
                 .master
@@ -106,7 +107,7 @@ impl PtyProcess for PortablePtyProcess {
                 .map_err(|e| AppError::Pty(format!("获取 PTY 写入端失败: {e}")))?;
             *guard = Some(w);
         }
-        let w = guard.as_mut().unwrap();
+        let w = guard.as_mut().ok_or_else(|| AppError::Pty("PTY 写入端未就绪".into()))?;
         w.write_all(data)
             .and_then(|_| w.flush())
             .map_err(|e| AppError::Pty(format!("PTY 写入失败: {e}")))
@@ -125,12 +126,12 @@ impl PtyProcess for PortablePtyProcess {
 
     fn kill(&mut self) -> Result<(), AppError> {
         self.killed.store(true, Ordering::SeqCst);
-        let mut child = self.child.lock().map_err(|_| AppError::Pty("子进程锁失效".into()))?;
+        let mut child = self.child.lock();
         child.kill().map_err(|e| AppError::Pty(format!("结束进程失败: {e}")))
     }
 
     fn try_wait(&mut self) -> Result<Option<i32>, AppError> {
-        let mut child = self.child.lock().map_err(|_| AppError::Pty("子进程锁失效".into()))?;
+        let mut child = self.child.lock();
         match child.try_wait() {
             Ok(Some(status)) => Ok(Some(status.exit_code() as i32)),
             Ok(None) => Ok(None),
@@ -145,6 +146,6 @@ impl PtyProcess for PortablePtyProcess {
     }
 
     fn pid(&self) -> Option<u32> {
-        self.child.lock().ok().and_then(|c| c.process_id())
+        self.child.lock().process_id()
     }
 }

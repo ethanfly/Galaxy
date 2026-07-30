@@ -55,5 +55,9 @@ incremental = true
 lto = true
 codegen-units = 1
 opt-level = 3
-panic = "abort"
+# Desktop apps must use unwind: with panic=abort, ANY thread panic (PTY
+# reader, agent scan, Tauri command) immediately kills the process and
+# Windows reports 0xc0000409 / BEX64 "闪退". Unwind lets spawn_blocking and
+# catch_unwind turn panics into recoverable errors.
+panic = "unwind"
 strip = true

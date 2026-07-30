@@ -1,10 +1,16 @@
 //! Atomic persistence with last-known-good backup and stepwise migrations
 //! (spec §7):
-//!   write: serialize → temp file in same dir → flush + sync → replace original
-//!          → copy fresh file into backups/
+//!   write: serialize → unique temp file in same dir → flush + sync → replace
+//!          original → copy fresh file into backups/
 //!   load:  main file → backup → safe defaults; corrupted files are moved
 //!          aside (`.corrupt-<ts>`), never overwritten.
+//!
+//! Concurrent `save` calls are serialized with a mutex and write to unique
+//! temp names so two in-flight persists cannot delete each other's temp file
+//! (which previously surfaced as `AppError::Io` / os error 2 on Windows).
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use parking_lot::Mutex;
 use time::OffsetDateTime;
 
 use crate::core::models::{Store, STORE_SCHEMA_VERSION};
@@ -13,6 +19,10 @@ use super::paths::DataPaths;
 
 pub struct Persistence {
     paths: DataPaths,
+    /// Serializes atomic replace so concurrent commands cannot race on the
+    /// shared `store.json` / temp path.
+    write_lock: Mutex<()>,
+    tmp_seq: AtomicU64,
 }
 
 fn timestamp() -> String {
@@ -25,7 +35,11 @@ fn timestamp() -> String {
 impl Persistence {
     pub fn new(paths: DataPaths) -> Result<Self, AppError> {
         paths.ensure_dirs()?;
-        Ok(Self { paths })
+        Ok(Self {
+            paths,
+            write_lock: Mutex::new(()),
+            tmp_seq: AtomicU64::new(0),
+        })
     }
 
     pub fn paths(&self) -> &DataPaths {
@@ -63,7 +77,9 @@ impl Persistence {
     }
 
     fn try_load_file(&self, path: &Path) -> Result<Store, AppError> {
-        let raw = std::fs::read_to_string(path)?;
+        let raw = std::fs::read_to_string(path).map_err(|e| {
+            AppError::Persistence(format!("读取 {} 失败: {e}", path.display()))
+        })?;
         let mut value: serde_json::Value = serde_json::from_str(&raw)
             .map_err(|e| AppError::Persistence(format!("解析 {} 失败: {e}", path.display())))?;
         // Pre-flatten era stores used a double-nested pane shape from serde's
@@ -98,23 +114,56 @@ impl Persistence {
         Ok(store)
     }
 
-    /// Atomic write: temp file → flush → replace → backup copy.
+    /// Atomic write: unique temp → flush → replace → backup copy.
+    /// Serialized so concurrent Tauri commands / window-state saves cannot
+    /// race on a shared temp path (Windows os error 2).
     pub fn save(&self, store: &Store) -> Result<(), AppError> {
-        let tmp = self.paths.store.with_extension("json.tmp");
-        let bytes = serde_json::to_vec_pretty(store)?;
+        let _guard = self.write_lock.lock();
+        // Recreate data dirs if the user (or cleaner) removed them mid-session.
+        self.paths.ensure_dirs()?;
+
+        let seq = self.tmp_seq.fetch_add(1, Ordering::Relaxed);
+        // Unique temp name: concurrent saves must not share one path.
+        let tmp = self
+            .paths
+            .root
+            .join(format!("store.{}.{}.tmp", std::process::id(), seq));
+
+        let bytes = serde_json::to_vec_pretty(store)
+            .map_err(|e| AppError::Persistence(format!("序列化存储失败: {e}")))?;
         std::fs::write(&tmp, &bytes)
             .map_err(|e| AppError::Persistence(format!("写入临时存储失败: {e}")))?;
         // flush + fsync for durability, then replace
         {
-            let f = std::fs::OpenOptions::new().read(true).write(true).open(&tmp)?;
+            let f = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&tmp)
+                .map_err(|e| AppError::Persistence(format!("打开临时存储失败: {e}")))?;
             f.sync_all().ok();
         }
+
+        // Windows cannot rename over an existing file. Remove destination
+        // first, then rename; on failure try to leave a recoverable state.
         if self.paths.store.exists() {
             std::fs::remove_file(&self.paths.store)
                 .map_err(|e| AppError::Persistence(format!("替换主存储失败: {e}")))?;
         }
-        std::fs::rename(&tmp, &self.paths.store)
-            .map_err(|e| AppError::Persistence(format!("移动主存储失败: {e}")))?;
+        if let Err(e) = std::fs::rename(&tmp, &self.paths.store) {
+            // Best-effort: if rename failed but tmp still holds the new data,
+            // copy as a fallback so the user does not lose the write.
+            match std::fs::copy(&tmp, &self.paths.store) {
+                Ok(_) => {
+                    let _ = std::fs::remove_file(&tmp);
+                }
+                Err(copy_err) => {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(AppError::Persistence(format!(
+                        "移动主存储失败: {e}（回退复制也失败: {copy_err}）"
+                    )));
+                }
+            }
+        }
         // keep last-good backup
         let _ = std::fs::copy(&self.paths.store, self.paths.backups.join("store.json"));
         Ok(())
@@ -276,5 +325,50 @@ mod tests {
         let (store, _) = p.load().unwrap();
         assert_eq!(store.schema_version, STORE_SCHEMA_VERSION);
         assert!(!store.config.shortcuts.is_empty(), "defaults merged");
+    }
+
+    #[test]
+    fn concurrent_saves_do_not_lose_store() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let (_tmp, paths) = tmp_paths();
+        let p = Arc::new(Persistence::new(paths.clone()).unwrap());
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let p = p.clone();
+            handles.push(thread::spawn(move || {
+                let mut store = Store::default();
+                store.projects.push(crate::core::models::Project {
+                    id: format!("p{i}"),
+                    name: format!("demo{i}"),
+                    path: format!("C:\\demo{i}"),
+                    color: "#694dc9".into(),
+                    default_profile_id: None,
+                    created_at: crate::core::models::now_rfc3339(),
+                    last_accessed_at: crate::core::models::now_rfc3339(),
+                });
+                p.save(&store).expect("concurrent save must succeed");
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert!(paths.store.exists(), "store.json must exist after concurrent saves");
+        let (loaded, degraded) = p.load().unwrap();
+        assert!(!degraded);
+        assert_eq!(loaded.projects.len(), 1, "last writer wins with a valid store");
+        // No leftover shared tmp name (unique temps are cleaned on success).
+        let leftovers: Vec<_> = std::fs::read_dir(&paths.root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("store.")
+                    && e.file_name().to_string_lossy().ends_with(".tmp")
+            })
+            .collect();
+        assert!(leftovers.is_empty(), "temp files cleaned: {leftovers:?}");
     }
 }

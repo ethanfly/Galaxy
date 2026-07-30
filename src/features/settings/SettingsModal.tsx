@@ -42,7 +42,13 @@ export function SettingsModal() {
   const [draft, setDraft] = useState<AppConfig | null>(null);
 
   useEffect(() => {
-    if (open && config) setDraft(structuredClone(config));
+    if (open && config) {
+      setDraft(structuredClone(config));
+      // Stale global errors (e.g. a prior failed save) should not stick on reopen.
+      if (useAppStore.getState().error) {
+        useAppStore.setState({ error: null });
+      }
+    }
   }, [open, config]);
 
   if (!open || !draft) return null;

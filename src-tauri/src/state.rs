@@ -410,9 +410,10 @@ pub fn build_state(app: AppHandle) -> Result<BuiltState, AppError> {
 }
 
 pub fn shutdown(state: &AppState) {
-    write_run_state(&state.data_paths().run_state, true);
+    // PTY shutdown is idempotent; persist + run_state may run twice (close + destroy).
     state.pty().shutdown();
     let _ = state.persist();
+    write_run_state(&state.data_paths().run_state, true);
 }
 
 /// Path/link validation for opening externals (§3.3).
