@@ -242,17 +242,24 @@ impl PtyEventSink for Sink {
             .unwrap_or(AgentStatus::Idle);
         self.state.agent_status.write().insert(pane_id.to_string(), status);
         // Agent badge detection also flows through here: keep the pane meta.
+        // IMPORTANT: never call persist* while holding store.write() — persist
+        // takes store.read() and parking_lot RwLock will deadlock (app freeze
+        // after launching an agent command).
+        let mut kind_changed = false;
         {
             let mut store = self.state.store.write();
             for s in store.sessions.iter_mut() {
                 if let Some(pane) = s.layout.find_pane_mut(pane_id) {
                     if pane.agent_kind != Some(kind) {
                         pane.agent_kind = Some(kind);
-                        self.state.persist_debounced();
+                        kind_changed = true;
                     }
                     break;
                 }
             }
+        }
+        if kind_changed {
+            self.state.persist_debounced();
         }
         let _ = self.state.app.emit(
             events::AGENT_STATUS,

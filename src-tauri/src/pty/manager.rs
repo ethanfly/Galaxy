@@ -101,7 +101,8 @@ struct PaneCtx {
 }
 
 struct ProcessEntry {
-    process: Mutex<Box<dyn PtyProcess>>,
+    /// Arc so writers can drop the processes-map lock before blocking I/O.
+    process: Arc<Mutex<Box<dyn PtyProcess>>>,
     _reader: JoinHandle<()>,
 }
 
@@ -266,7 +267,10 @@ impl PtyManager {
 
         self.processes.lock().insert(
             pane_id.to_string(),
-            ProcessEntry { process: Mutex::new(process), _reader: reader_handle },
+            ProcessEntry {
+                process: Arc::new(Mutex::new(process)),
+                _reader: reader_handle,
+            },
         );
 
         // Resume command injection: after the PTY shows its first output (or a
@@ -285,63 +289,91 @@ impl PtyManager {
     /// Keyboard input — direct, never batched. Input is also tracked so
     /// command blocks and title fallbacks can attribute commands.
     pub fn write_input(&self, pane_id: &str, data: &str) -> Result<(), AppError> {
+        // 1) Deliver bytes to the PTY first so Enter is never delayed/blocked
+        //    by history / agent side-effects (and never hold the processes map
+        //    lock across a potentially blocking write).
+        let proc = {
+            let processes = self.processes.lock();
+            processes
+                .get(pane_id)
+                .map(|e| e.process.clone())
+                .ok_or_else(|| AppError::Pty("pane 对应的终端进程不存在".into()))?
+        };
+        proc.lock().write(data.as_bytes())?;
+
+        // 2) Update command-line tracking; collect side effects without holding
+        //    panes across sink callbacks (those may lock store / persist).
+        enum Side {
+            Agent {
+                kind: AgentKind,
+                session_id: String,
+                status: AgentStatus,
+            },
+            Block(crate::core::models::CommandBlock),
+        }
+        let mut sides: Vec<Side> = Vec::new();
         {
             let mut panes = self.panes.lock();
-            if let Some(ctx) = panes.get_mut(pane_id) {
-                // Parse the full chunk once so CSI sequences (focus in/out
-                // ESC[I / ESC[O, arrows, etc.) never leak into history.
-                if let Some(line) = ctx.input.feed(data) {
-                    ctx.tracker.touch();
-                    // Agent badge: recognize agent executables.
-                    if let Some(kind) = super::tracker::detect_agent_kind(&line) {
-                        if ctx.agent_kind != Some(kind) {
-                            ctx.agent_kind = Some(kind);
-                            let sid = ctx.session_id.clone();
-                            let status = ctx.last_status;
-                            self.sink.agent_status(pane_id, &sid, kind, status);
-                        }
+            let Some(ctx) = panes.get_mut(pane_id) else {
+                return Ok(());
+            };
+            // Parse the full chunk once so CSI sequences (focus in/out
+            // ESC[I / ESC[O, arrows, etc.) never leak into history.
+            if let Some(line) = ctx.input.feed(data) {
+                ctx.tracker.touch();
+                if let Some(kind) = super::tracker::detect_agent_kind(&line) {
+                    if ctx.agent_kind != Some(kind) {
+                        ctx.agent_kind = Some(kind);
+                        sides.push(Side::Agent {
+                            kind,
+                            session_id: ctx.session_id.clone(),
+                            status: ctx.last_status,
+                        });
                     }
-                    if ctx.tracker.shell_integration {
-                        // OSC 133 B/C/D will open/close blocks; just stash the line.
-                        ctx.tracker.note_input_submission(Some(line));
-                    } else {
-                        // Heuristic path (PowerShell/cmd without shell integration):
-                        // 1) close previous block (if any)
-                        // 2) open a new block with this command text
-                        if let Some((cmd, out, code)) = ctx.tracker.close_block(None) {
-                            if !out.is_empty() || !cmd.is_empty() {
-                                let block = make_block(
-                                    &ctx.project_id,
-                                    &ctx.session_id,
-                                    pane_id,
-                                    cmd,
-                                    out,
-                                    code,
-                                );
-                                self.sink.block_completed(&block);
-                            }
-                        }
-                        if !line.trim().is_empty() {
-                            ctx.tracker.begin_heuristic_block(line);
-                        }
-                    }
-                } else if !data.is_empty() {
-                    ctx.tracker.touch();
                 }
+                if ctx.tracker.shell_integration {
+                    ctx.tracker.note_input_submission(Some(line));
+                } else {
+                    if let Some((cmd, out, code)) = ctx.tracker.close_block(None) {
+                        if !out.is_empty() || !cmd.is_empty() {
+                            sides.push(Side::Block(make_block(
+                                &ctx.project_id,
+                                &ctx.session_id,
+                                pane_id,
+                                cmd,
+                                out,
+                                code,
+                            )));
+                        }
+                    }
+                    if !line.trim().is_empty() {
+                        ctx.tracker.begin_heuristic_block(line);
+                    }
+                }
+            } else if !data.is_empty() {
+                ctx.tracker.touch();
             }
         }
-        let processes = self.processes.lock();
-        let entry = processes
-            .get(pane_id)
-            .ok_or_else(|| AppError::Pty("pane 对应的终端进程不存在".into()))?;
-        let mut guard = entry.process.lock();
-        guard.write(data.as_bytes())
+        for side in sides {
+            match side {
+                Side::Agent {
+                    kind,
+                    session_id,
+                    status,
+                } => self.sink.agent_status(pane_id, &session_id, kind, status),
+                Side::Block(block) => self.sink.block_completed(&block),
+            }
+        }
+        Ok(())
     }
 
     pub fn resize(&self, pane_id: &str, cols: u16, rows: u16) -> Result<(), AppError> {
-        let processes = self.processes.lock();
-        if let Some(entry) = processes.get(pane_id) {
-            entry.process.lock().resize(cols, rows)?;
+        let proc = {
+            let processes = self.processes.lock();
+            processes.get(pane_id).map(|e| e.process.clone())
+        };
+        if let Some(proc) = proc {
+            proc.lock().resize(cols, rows)?;
         }
         Ok(())
     }
