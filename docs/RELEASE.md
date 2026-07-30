@@ -6,19 +6,26 @@
 
 | 流程 | Workflow | 触发 | 作用 |
 | --- | --- | --- | --- |
-| 持续集成 | `test.yml` | push/PR → `main` | **只跑测试**，不发版 |
-| **发版（推荐）** | `version.yml` | Actions **手动** Run | bump 版本 → 打标签 → **同一次流水线**构建 NSIS → 创建 GitHub Release |
+| 持续集成 | `test.yml` | push/PR → `main` | 跑测试 |
+| **自动发版** | `version.yml` | **push → `main`**（默认 patch） | bump 版本 → 打标签 → 构建 NSIS → GitHub Release |
+| 手动发版 | `version.yml` | Actions **手动** Run（patch/minor/major） | 同上，可选 dry_run |
 | 发版（标签） | `release.yml` | 推送 `v*.*.*`（本地 `git push --tags`） | 构建 NSIS → GitHub Release |
 
-> **重要：** 推送到 `main` 只会跑 **test**，不会自动出现在 Releases。  
+> **自动发版规则：** 推送到 `main` 即发 **patch** 版。  
+> - 发版 bot 提交 `chore(release): vX.Y.Z` 不会再触发（GITHUB_TOKEN + 消息过滤）。  
+> - 提交说明含 `[skip release]` 可跳过本次发版（例如纯文档）。  
+> - minor/major 请用 Actions 手动 Run，或本地打标签。  
 > GitHub 规定：用默认 `GITHUB_TOKEN` 推送的 tag **不会**再触发别的 workflow，所以「Version & Tag」里已经把 **构建 + 发布** 串在同一条流水线里。
 
-### 发一版（推荐）
+### 发一版
+
+**日常（自动）：** `git push origin main` → 等待 Actions「Version & Tag」→ [Releases](https://github.com/ethanfly/Galaxy/releases)
+
+**手动 minor/major：**
 
 1. 打开仓库 **Actions → Version & Tag → Run workflow**
-2. 选择 `patch` / `minor` / `major`（不要勾 dry_run）
+2. 选择 `minor` / `major`（不要勾 dry_run）
 3. 等待 Windows job 结束
-4. 打开 [Releases](https://github.com/ethanfly/Galaxy/releases) 下载 `*-setup.exe`
 
 本地等价：
 

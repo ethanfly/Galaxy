@@ -2,8 +2,14 @@ name: Version & Tag
 
 # Bump semver, push tag vX.Y.Z, then immediately run the Windows release build
 # in this same workflow (GITHUB_TOKEN cannot chain-trigger other workflows on tag push).
+#
+# Triggers:
+#   - push to main → automatic patch release (skip chore(release) / [skip release])
+#   - workflow_dispatch → manual patch|minor|major (optional dry_run)
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       bump:
@@ -21,12 +27,24 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # push → always patch; manual dispatch uses the chosen input
+  BUMP_KIND: ${{ github.event_name == 'workflow_dispatch' && inputs.bump || 'patch' }}
 
 jobs:
   # ── 1) Bump version + create tag on Ubuntu (fast) ───────────────────
   bump:
     name: Bump version & tag
     runs-on: ubuntu-latest
+    # Avoid re-entry: release bot commits "chore(release): vX.Y.Z" (also blocked by
+    # GITHUB_TOKEN not re-triggering workflows). Allow [skip release] for docs-only pushes.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'push' &&
+        github.ref == 'refs/heads/main' &&
+        !startsWith(github.event.head_commit.message, 'chore(release):') &&
+        !contains(github.event.head_commit.message, '[skip release]')
+      )
     outputs:
       version: ${{ steps.ver.outputs.next }}
       tag: ${{ steps.ver.outputs.tag }}
@@ -43,11 +61,14 @@ jobs:
 
       - name: Compute next version
         id: ver
+        env:
+          BUMP: ${{ env.BUMP_KIND }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: |
           CURRENT=$(node scripts/bump-version.mjs)
           NEXT=$(node -e "
             const [a,b,c]='$CURRENT'.split('.').map(Number);
-            const k='${{ inputs.bump }}';
+            const k=process.env.BUMP || 'patch';
             let n = k==='major' ? [a+1,0,0] : k==='minor' ? [a,b+1,0] : [a,b,c+1];
             console.log(n.join('.'));
           ")
@@ -58,17 +79,19 @@ jobs:
             echo "Tag v$NEXT already exists"
             exit 1
           fi
-          if [ "${{ inputs.dry_run }}" = "true" ]; then
+          if [ "$DRY_RUN" = "true" ]; then
             echo "skipped=true" >> "$GITHUB_OUTPUT"
           else
             echo "skipped=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "Current: $CURRENT → Next: $NEXT (${{ inputs.bump }})"
+          echo "Current: $CURRENT → Next: $NEXT ($BUMP) event=${{ github.event_name }}"
 
       - name: Apply, commit, tag, push
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ steps.ver.outputs.skipped == 'false' }}
+        env:
+          BUMP: ${{ env.BUMP_KIND }}
         run: |
-          node scripts/bump-version.mjs ${{ inputs.bump }}
+          node scripts/bump-version.mjs "$BUMP"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
@@ -83,9 +106,10 @@ jobs:
           {
             echo "### Version"
             echo ""
-            echo "- **${{ steps.ver.outputs.current }}** → **${{ steps.ver.outputs.next }}** (\`${{ inputs.bump }}\`)"
-            if [ "${{ inputs.dry_run }}" = "true" ]; then
-              echo "- Dry run — no tag / build"
+            echo "- **${{ steps.ver.outputs.current }}** → **${{ steps.ver.outputs.next }}** (\`${{ env.BUMP_KIND }}\`)"
+            echo "- Trigger: \`${{ github.event_name }}\`"
+            if [ "${{ steps.ver.outputs.skipped }}" = "true" ]; then
+              echo "- Dry run / skipped — no tag / build"
             else
               echo "- Tag \`v${{ steps.ver.outputs.next }}\` pushed; Windows release job starts next"
             fi
