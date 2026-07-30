@@ -60,7 +60,7 @@ cd galaxy-terminal
 
 npm ci
 npm run gen:icons           # 重新生成像素图标（幂等，纯 Node 脚本无外部依赖）
-npm run tauri build -- --locked
+npm run tauri build -- -- --locked   # 第二个 `--` 把 --locked 交给 cargo
 ```
 
 产物：

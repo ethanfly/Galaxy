@@ -147,7 +147,8 @@ jobs:
           Pop-Location
 
       - name: Build app + NSIS
-        run: npm run tauri build -- --locked
+        # First `--` ends npm args; second `--` forwards the rest to cargo.
+        run: npm run tauri build -- -- --locked
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
