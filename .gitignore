@@ -1,0 +1,10 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+*.log
+.DS_Store
+playwright-report/
+test-results/
+.e2e-artifacts/
+local-scripts/
