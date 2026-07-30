@@ -13,7 +13,7 @@
 
 > **自动发版规则：** 推送到 `main` 即发 **patch** 版。  
 > - 发版 bot 提交 `chore(release): vX.Y.Z` 不会再触发（GITHUB_TOKEN + 消息过滤）。  
-> - 提交说明含 `[skip release]` 可跳过本次发版（例如纯文档）。  
+> - 提交说明**标题以** `[skip release]` 开头可跳过本次发版（例如纯文档）。  
 > - minor/major 请用 Actions 手动 Run，或本地打标签。  
 > GitHub 规定：用默认 `GITHUB_TOKEN` 推送的 tag **不会**再触发别的 workflow，所以「Version & Tag」里已经把 **构建 + 发布** 串在同一条流水线里。
 

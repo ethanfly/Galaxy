@@ -36,14 +36,15 @@ jobs:
     name: Bump version & tag
     runs-on: ubuntu-latest
     # Avoid re-entry: release bot commits "chore(release): vX.Y.Z" (also blocked by
-    # GITHUB_TOKEN not re-triggering workflows). Allow [skip release] for docs-only pushes.
+    # GITHUB_TOKEN not re-triggering workflows). Skip when the *subject* starts
+    # with [skip release] (must be first chars — body text must not match).
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (
         github.event_name == 'push' &&
         github.ref == 'refs/heads/main' &&
         !startsWith(github.event.head_commit.message, 'chore(release):') &&
-        !contains(github.event.head_commit.message, '[skip release]')
+        !startsWith(github.event.head_commit.message, '[skip release]')
       )
     outputs:
       version: ${{ steps.ver.outputs.next }}
