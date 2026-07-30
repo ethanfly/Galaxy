@@ -82,7 +82,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
           ipc.systemPendingOpenHere(),
         ]);
       setLanguage(config.language);
-      const sorted = sortSessions(sessions);
+      const sorted = sortSessions(normalizeSessions(sessions));
       set({
         boot,
         projects,
@@ -110,7 +110,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
 
   async refreshSessions() {
     const sessions = await ipc.sessionList();
-    set({ sessions: sortSessions(sessions) });
+    set({ sessions: sortSessions(normalizeSessions(sessions)) });
   },
 
   async refreshConfig() {
@@ -213,9 +213,10 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   },
 
   updateSessionLocal(session) {
+    const normalized = { ...session, layout: normalizeLayout(session.layout) };
     set({
       sessions: sortSessions(
-        get().sessions.map((s) => (s.id === session.id ? session : s)),
+        get().sessions.map((s) => (s.id === normalized.id ? normalized : s)),
       ),
     });
   },
@@ -282,9 +283,14 @@ function projectOfFirst(sessions: Session[], projects: Project[]): string | null
 }
 
 import type { LayoutNodeRust, Pane } from "../ipc/types";
+import { unwrapPane } from "../utils";
 
 function mapLayout(node: LayoutNodeRust, f: (p: Pane) => Pane): LayoutNodeRust {
-  if ("pane" in node) return { pane: f(node.pane) };
+  if ("pane" in node) {
+    const base = unwrapPane(node.pane as Pane | { pane: Pane });
+    if (!base) return node;
+    return { pane: f(base) };
+  }
   return {
     split: {
       direction: node.split.direction,
@@ -293,4 +299,13 @@ function mapLayout(node: LayoutNodeRust, f: (p: Pane) => Pane): LayoutNodeRust {
       second: mapLayout(node.split.second, f),
     },
   };
+}
+
+/** Coerce any legacy double-nested layout nodes into the flat pane contract. */
+function normalizeLayout(node: LayoutNodeRust): LayoutNodeRust {
+  return mapLayout(node, (p) => p);
+}
+
+function normalizeSessions(sessions: Session[]): Session[] {
+  return sessions.map((s) => ({ ...s, layout: normalizeLayout(s.layout) }));
 }

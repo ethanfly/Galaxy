@@ -36,10 +36,20 @@ export default function App() {
   }, [init]);
 
   // Global IPC event wiring (single subscriptions at app root).
+  // StrictMode mounts/unmounts once in dev: async listen() must cancel if the
+  // effect cleaned up before the promise resolved, otherwise we keep two
+  // pty://output listeners and every keystroke is painted twice.
   useEffect(() => {
+    let cancelled = false;
     const unlisteners: Array<() => void> = [];
     const add = (p: Promise<() => void>) => {
-      void p.then((u) => unlisteners.push(u));
+      void p.then((u) => {
+        if (cancelled) {
+          u();
+          return;
+        }
+        unlisteners.push(u);
+      });
     };
 
     add(onPtyOutput((batch) => ingest(batch.chunks)));
@@ -75,7 +85,10 @@ export default function App() {
       window.dispatchEvent(new CustomEvent("galaxy:git-refresh"));
     }));
 
-    return () => unlisteners.forEach((u) => u());
+    return () => {
+      cancelled = true;
+      unlisteners.forEach((u) => u());
+    };
   }, [ingest]);
 
   // Drain queued --open-here paths after init.

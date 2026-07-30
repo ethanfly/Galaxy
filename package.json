@@ -12,7 +12,11 @@
     "test:watch": "vitest",
     "tauri": "tauri",
     "gen:icons": "node scripts/gen-icons.mjs",
-    "gen:licenses": "node scripts/gen-licenses.mjs"
+    "gen:licenses": "node scripts/gen-licenses.mjs",
+    "version:show": "node scripts/bump-version.mjs",
+    "version:patch": "node scripts/bump-version.mjs patch",
+    "version:minor": "node scripts/bump-version.mjs minor",
+    "version:major": "node scripts/bump-version.mjs major"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.6.0",

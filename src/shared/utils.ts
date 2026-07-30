@@ -1,10 +1,24 @@
 // Shared formatting / matching / key-chord helpers (unit-tested).
 import type { LayoutNodeRust, Pane } from "./ipc/types";
 
+/** Normalize a pane node that may still carry the legacy double-nest shape. */
+export function unwrapPane(raw: Pane | { pane: Pane } | null | undefined): Pane | null {
+  if (!raw || typeof raw !== "object") return null;
+  // Live contract: Pane has `profile`. Legacy wire: { pane: Pane }.
+  if ("profile" in raw && (raw as Pane).profile) return raw as Pane;
+  if ("pane" in raw) return unwrapPane((raw as { pane: Pane }).pane);
+  // Profile missing but looks like a pane (id/cwd present) — return as-is.
+  if ("id" in raw && "cwd" in raw) return raw as Pane;
+  return null;
+}
+
 /** Flatten a layout tree into panes, depth-first (stable order). */
 export function layoutPanes(node: LayoutNodeRust | null | undefined): Pane[] {
   if (!node) return [];
-  if ("pane" in node) return [node.pane];
+  if ("pane" in node) {
+    const p = unwrapPane(node.pane as Pane | { pane: Pane });
+    return p ? [p] : [];
+  }
   return [...layoutPanes(node.split.first), ...layoutPanes(node.split.second)];
 }
 

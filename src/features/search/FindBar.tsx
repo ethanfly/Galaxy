@@ -1,6 +1,7 @@
 // Ctrl+F — xterm find across all panes of the current session (§5.3).
 import { useEffect, useRef, useState } from "react";
 
+import { IconChevronDown, IconChevronUp, IconClose } from "../../shared/icons/Icons";
 import { searchAddons } from "../terminal/TerminalView";
 import { useAppStore } from "../../shared/stores/appStore";
 import { useUiStore } from "../../shared/stores/uiStore";
@@ -57,9 +58,15 @@ export function FindBar() {
           if (e.key === "Escape") close();
         }}
       />
-      <button className="icon-btn" onClick={() => find(-1)} title="上一个">↑</button>
-      <button className="icon-btn" onClick={() => find(1)} title="下一个">↓</button>
-      <button className="icon-btn" onClick={close} title="关闭">✕</button>
+      <button type="button" className="icon-btn" onClick={() => find(-1)} title="上一个" aria-label="上一个">
+        <IconChevronUp />
+      </button>
+      <button type="button" className="icon-btn" onClick={() => find(1)} title="下一个" aria-label="下一个">
+        <IconChevronDown />
+      </button>
+      <button type="button" className="icon-btn" onClick={close} title="关闭" aria-label="关闭">
+        <IconClose />
+      </button>
     </div>
   );
 }

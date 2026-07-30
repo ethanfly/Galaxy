@@ -1,45 +1,105 @@
 // Git panel: branch, ahead/behind, change counts and file list (§5.5).
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { gitCheckout, gitStatus } from "../../shared/ipc/client";
-import type { GitFileChange, GitStatus } from "../../shared/ipc/types";
+import { gitBranches, gitCheckout, gitStatus } from "../../shared/ipc/client";
+import type { GitBranch, GitFileChange, GitStatus } from "../../shared/ipc/types";
+import { IconGit, IconRefresh } from "../../shared/icons/Icons";
+import { t } from "../../shared/i18n";
 import { useAppStore } from "../../shared/stores/appStore";
+
+/** Coalesce watcher storms so the toolbar never strobes on every .git tick. */
+const AUTO_REFRESH_MS = 600;
 
 export function GitPanel() {
   const project = useAppStore((s) => s.projects.find((p) => p.id === s.currentProjectId));
   const [status, setStatus] = useState<GitStatus | null>(null);
+  const [branches, setBranches] = useState<GitBranch[]>([]);
   const [loading, setLoading] = useState(false);
+  const [checkingOut, setCheckingOut] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const projectId = project?.id;
 
-  const refresh = async (pid: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      setStatus(await gitStatus(pid));
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
+  const inFlight = useRef(false);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const projectIdRef = useRef(projectId);
+  projectIdRef.current = projectId;
+
+  const refresh = useCallback(async (pid: string, mode: "manual" | "auto" = "auto") => {
+    // Auto refreshes never toggle `loading` — that was the strobing "刷新" button.
+    if (mode === "auto" && inFlight.current) return;
+    inFlight.current = true;
+    if (mode === "manual") {
+      setLoading(true);
+      setError(null);
     }
-  };
+    try {
+      const [nextStatus, nextBranches] = await Promise.all([
+        gitStatus(pid),
+        gitBranches(pid).catch(() => [] as GitBranch[]),
+      ]);
+      // Drop stale responses if the user switched projects mid-flight.
+      if (projectIdRef.current !== pid) return;
+      setStatus(nextStatus);
+      setBranches(nextBranches);
+    } catch (e) {
+      if (projectIdRef.current === pid && mode === "manual") {
+        setError((e as Error).message);
+      }
+    } finally {
+      inFlight.current = false;
+      if (mode === "manual") setLoading(false);
+    }
+  }, []);
+
+  const scheduleAutoRefresh = useCallback(
+    (pid: string) => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      debounceTimer.current = setTimeout(() => {
+        debounceTimer.current = null;
+        void refresh(pid, "auto");
+      }, AUTO_REFRESH_MS);
+    },
+    [refresh],
+  );
 
   useEffect(() => {
-    if (projectId) void refresh(projectId);
-    else setStatus(null);
-  }, [projectId]);
+    if (projectId) void refresh(projectId, "manual");
+    else {
+      setStatus(null);
+      setBranches([]);
+    }
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, [projectId, refresh]);
 
   useEffect(() => {
     const onRefresh = () => {
-      if (projectId) void refresh(projectId);
+      const pid = projectIdRef.current;
+      if (pid) scheduleAutoRefresh(pid);
     };
+    // Only react to git watcher / external signals — not window focus
+    // (focus caused extra flicker when clicking inside the panel).
     window.addEventListener("galaxy:git-refresh", onRefresh);
-    window.addEventListener("focus", onRefresh);
-    return () => {
-      window.removeEventListener("galaxy:git-refresh", onRefresh);
-      window.removeEventListener("focus", onRefresh);
-    };
-  }, [projectId]);
+    return () => window.removeEventListener("galaxy:git-refresh", onRefresh);
+  }, [scheduleAutoRefresh]);
+
+  const onCheckout = async (branch: string) => {
+    if (!projectId || checkingOut) return;
+    setCheckingOut(branch);
+    setError(null);
+    try {
+      await gitCheckout(projectId, branch);
+      window.dispatchEvent(new CustomEvent("galaxy:git-refresh"));
+      await refresh(projectId, "auto");
+    } catch (e) {
+      const msg =
+        (e as { detail?: string; message?: string }).detail ?? (e as Error).message;
+      setError(msg);
+    } finally {
+      setCheckingOut(null);
+    }
+  };
 
   if (!project) return <div className="panel-body"><Empty text="选择项目后显示 Git 状态" /></div>;
   if (status && !status.gitAvailable) {
@@ -61,19 +121,66 @@ export function GitPanel() {
   const untracked = status?.changes.filter((c) => c.status === "?") ?? [];
 
   return (
-    <div className="panel-body">
-      <div className="panel-toolbar">
-        <span style={{ color: "var(--cyan-400)" }}>⑂ {status?.branch ?? "HEAD detached"}</span>
+    <div className="panel-body git-panel">
+      <div className="panel-toolbar git-toolbar">
+        <span className="git-branch-label" title={status?.branch ?? "HEAD detached"}>
+          <IconGit size={12} className="inline-icon" />
+          <span>{status?.branch ?? "HEAD detached"}</span>
+        </span>
         {(status?.ahead ?? 0) > 0 && <span className="kbd">↑{status!.ahead}</span>}
         {(status?.behind ?? 0) > 0 && <span className="kbd">↓{status!.behind}</span>}
         <span style={{ flex: 1 }} />
-        <button className="btn" disabled={loading} onClick={() => void refresh(project.id)}>
-          {loading ? "…" : "刷新"}
+        <button
+          type="button"
+          className="btn git-refresh-btn"
+          disabled={loading}
+          title={t("refresh")}
+          onClick={() => void refresh(project.id, "manual")}
+        >
+          <IconRefresh size={12} className="inline-icon" />
+          <span>{loading ? "刷新中" : t("refresh")}</span>
         </button>
       </div>
-      {error && <div style={{ color: "var(--red-400)" }}>{error}</div>}
+
+      {error && (
+        <div className="git-error" role="alert">
+          {error}
+        </div>
+      )}
+
+      {/* Branch switcher lives in-panel so statusbar popups aren't blocked */}
+      <div className="git-section">
+        <div className="git-section-title">{t("checkout")}</div>
+        {branches.length === 0 ? (
+          <div className="git-muted">暂无分支列表</div>
+        ) : (
+          <div className="git-branch-list" role="listbox" aria-label={t("checkout")}>
+            {branches.map((b) => (
+              <button
+                key={b.name}
+                type="button"
+                role="option"
+                aria-selected={b.current}
+                className={`git-branch-item ${b.current ? "current" : ""}`}
+                disabled={b.current || checkingOut === b.name}
+                title={b.current ? "当前分支" : `切换到 ${b.name}`}
+                onClick={() => void onCheckout(b.name)}
+              >
+                <span className="git-branch-mark" aria-hidden="true">
+                  {b.current ? "●" : checkingOut === b.name ? "…" : "○"}
+                </span>
+                <span className="git-branch-name">{b.name}</span>
+                {b.current && <span className="git-branch-tag">当前</span>}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       {status?.changes.length === 0 && (
-        <div style={{ color: "var(--text-lo)", padding: "8px 0" }}>工作区干净 ✓</div>
+        <div className="git-muted" style={{ padding: "8px 0" }}>
+          工作区干净 ✓
+        </div>
       )}
       <ChangeGroup title={`已暂存 (${staged.length})`} files={staged} cls="staged" />
       <ChangeGroup title={`未暂存 (${unstaged.length})`} files={unstaged} cls="unstaged" />
@@ -85,8 +192,8 @@ export function GitPanel() {
 function ChangeGroup({ title, files, cls }: { title: string; files: GitFileChange[]; cls: string }) {
   if (files.length === 0) return null;
   return (
-    <div>
-      <div style={{ color: "var(--text-lo)", fontSize: 11, padding: "6px 0 2px" }}>{title}</div>
+    <div className="git-section">
+      <div className="git-section-title">{title}</div>
       {files.map((f) => (
         <div key={f.path} className="git-file" title={f.path}>
           <span className={`git-status-badge ${cls}`}>{f.status === "?" ? "+" : f.status}</span>

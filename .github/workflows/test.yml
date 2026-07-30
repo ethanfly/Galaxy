@@ -4,9 +4,36 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
+  frontend:
+    name: Frontend
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+      - run: npm run build
+      - name: UI E2E (mocked)
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test --project=ui
+
   rust:
+    name: Rust
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,23 +44,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - name: Rust unit + integration tests
+      - name: Unit + integration tests
         run: cargo test --locked
         working-directory: src-tauri
-
-  frontend:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npx tsc
-      - run: npm test
-      - run: npm run build
-      - name: UI E2E (mocked runtime)
-        run: |
-          npx playwright install --with-deps chromium
-          npx playwright test --project=ui

@@ -1,13 +1,17 @@
 // Global tab strip (spec §5.1): cross-project tabs, rename / close /
 // close-others / drag reorder / horizontal scroll / Ctrl+W.
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import { IconAlert, IconClose, IconPlay, IconPlus } from "../../shared/icons/Icons";
 import { AgentBadge } from "../terminal/AgentBadge";
 import { t } from "../../shared/i18n";
-import type { Session } from "../../shared/ipc/types";
+import type { AgentStatus, Session } from "../../shared/ipc/types";
 import { useAppStore } from "../../shared/stores/appStore";
 import { useTerminalStore } from "../../shared/stores/terminalStore";
 import { layoutPanes } from "../../shared/utils";
+
+/** How long the “recent output” lamp stays lit after the last chunk. */
+const ACTIVITY_RECENT_MS = 12_000;
 
 export function TabBar() {
   const sessions = useAppStore((s) => s.sessions);
@@ -19,6 +23,14 @@ export function TabBar() {
   const activity = useTerminalStore((s) => s.activity);
   const agentStatus = useTerminalStore((s) => s.agentStatus);
   const marks = useTerminalStore((s) => s.marks);
+
+  // Tick so activity lamps expire without needing another state change
+  // (e.g. tab switch used to be the only re-render that cleared a stale lamp).
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const [menu, setMenu] = useState<{ session: Session; x: number; y: number } | null>(null);
   const [renameId, setRenameId] = useState<string | null>(null);
@@ -75,22 +87,38 @@ export function TabBar() {
       >
         {sessions.map((s) => {
           const panes = layoutPanes(s.layout);
+          const live = panes.some((p) => p.exitCode == null);
           const anyActivity = panes.some(
-            (p) => (activity[p.id] ?? 0) > Date.now() - 1500 && p.exitCode == null,
+            (p) => (activity[p.id] ?? 0) > now - ACTIVITY_RECENT_MS && p.exitCode == null,
           );
           const anyMark = panes.some((p) => (marks[p.id] ?? 0) > 0);
           const agent = panes
             .map((p) => agentStatus[p.id]?.kind ?? p.agentKind)
             .find(Boolean);
-          const status = panes
-            .map((p) => agentStatus[p.id]?.status)
-            .find((st) => st === "working" || st === "blocked");
+          const status = pickAgentStatus(panes.map((p) => agentStatus[p.id]?.status));
+          const active = s.id === currentSessionId;
+          // Status lamp: prefer agent state; fall back to recent PTY activity.
+          const lamp: TabLamp =
+            status === "working"
+              ? "working"
+              : status === "blocked"
+                ? "blocked"
+                : status === "done"
+                  ? "done"
+                  : anyActivity
+                    ? "activity"
+                    : agent
+                      ? "idle"
+                      : live
+                        ? "live"
+                        : "off";
+
           return (
             <div
               key={s.id}
               role="tab"
-              aria-selected={s.id === currentSessionId}
-              className={`tab ${s.id === currentSessionId ? "active" : ""}`}
+              aria-selected={active}
+              className={`tab ${active ? "active" : ""} lamp-${lamp}`}
               draggable={renameId !== s.id}
               onDragStart={() => onDragStart(s.id)}
               onDragOver={(e) => e.preventDefault()}
@@ -100,13 +128,25 @@ export function TabBar() {
                 e.preventDefault();
                 setMenu({ session: s, x: e.clientX, y: e.clientY });
               }}
-              title={s.title}
+              title={tabTitle(s.title, lamp, agent)}
             >
-              {anyActivity && <span className="activity-dot" aria-hidden />}
-              {anyMark && <span style={{ color: "var(--amber-400)" }}>◆</span>}
+              <span
+                className={`tab-status-lamp ${lamp}`}
+                aria-hidden
+                title={lampLabel(lamp)}
+              />
+              {anyMark && <span className="tab-mark" aria-hidden>◆</span>}
               {agent && <AgentBadge kind={agent} />}
-              {status === "working" && <span style={{ color: "var(--status-run)" }}>▶</span>}
-              {status === "blocked" && <span style={{ color: "var(--status-blocked)" }}>❗</span>}
+              {status === "working" && (
+                <span className="tab-status-icon working" aria-hidden>
+                  <IconPlay size={11} />
+                </span>
+              )}
+              {status === "blocked" && (
+                <span className="tab-status-icon blocked" aria-hidden>
+                  <IconAlert size={11} />
+                </span>
+              )}
               {renameId === s.id ? (
                 <input
                   autoFocus
@@ -131,7 +171,7 @@ export function TabBar() {
                   void closeSession(s.id);
                 }}
               >
-                ✕
+                <IconClose size={12} />
               </button>
             </div>
           );
@@ -141,12 +181,13 @@ export function TabBar() {
         <button
           className="icon-btn"
           title={`${t("newTerminal")} (Ctrl+Shift+T)`}
+          aria-label={t("newTerminal")}
           onClick={() => {
             const app = useAppStore.getState();
             if (app.currentProjectId) void app.createSession(app.currentProjectId);
           }}
         >
-          ＋
+          <IconPlus />
         </button>
       </div>
       {menu && (
@@ -170,6 +211,43 @@ export function TabBar() {
       )}
     </div>
   );
+}
+
+type TabLamp = "working" | "blocked" | "done" | "activity" | "idle" | "live" | "off";
+
+function pickAgentStatus(statuses: Array<AgentStatus | undefined>): AgentStatus | undefined {
+  if (statuses.includes("blocked")) return "blocked";
+  if (statuses.includes("working")) return "working";
+  if (statuses.includes("done")) return "done";
+  if (statuses.includes("idle")) return "idle";
+  return undefined;
+}
+
+function lampLabel(lamp: TabLamp): string {
+  switch (lamp) {
+    case "working":
+      return "运行中";
+    case "blocked":
+      return "等待输入 / 授权";
+    case "done":
+      return "已完成";
+    case "activity":
+      return "近期有输出";
+    case "idle":
+      return "Agent 空闲";
+    case "live":
+      return "终端运行中";
+    default:
+      return "";
+  }
+}
+
+function tabTitle(title: string, lamp: TabLamp, agent?: string | null): string {
+  const parts = [title];
+  const ll = lampLabel(lamp);
+  if (ll) parts.push(ll);
+  if (agent) parts.push(String(agent));
+  return parts.join(" · ");
 }
 
 export function ContextMenu({

@@ -123,8 +123,9 @@ function usePaletteItems(): PaletteItem[] {
     action("panel-git", "Git 面板", "Ctrl+Shift+G", "git panel", () => ui().openPanel("git"));
     action("panel-history", `${t("history")} 面板`, "", "history blocks panel", () => ui().openPanel("history"));
     action("panel-notifications", `${t("notifications")} 面板`, "Ctrl+Shift+N", "notifications", () => ui().openPanel("notifications"));
+    action("toggle-panel", t("toggleRightPanel"), "", "toggle right panel", () => ui().togglePanel());
     action("settings", t("settings"), "Ctrl+,", "settings preferences", () => ui().openSettings("general"));
-    action("toggle-sidebar", "切换项目侧栏", "", "sidebar toggle", () => ui().toggleSidebar());
+    action("toggle-sidebar", t("toggleSidebar"), "", "sidebar toggle", () => ui().toggleSidebar());
     action("sync-input", `${t("syncInput")} 切换`, "", "sync input broadcast", async () => {
       const s = app().sessions.find((x) => x.id === app().currentSessionId);
       if (s) await app().setSessionSync(s.id, !s.syncInput);

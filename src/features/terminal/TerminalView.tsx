@@ -45,6 +45,35 @@ const GALAXY_THEME = {
   brightWhite: "#eef1ff",
 };
 
+/**
+ * Font stack for Latin mono + CJK fallback.
+ * Cascadia/Consolas lack Han glyphs; without CJK faces xterm draws □ tofu.
+ * Order: readable mono first, then CJK-capable faces Windows/macOS usually ship.
+ */
+export const TERMINAL_FONT_FAMILY = [
+  "Cascadia Mono",
+  "Cascadia Code",
+  "JetBrains Mono",
+  "Sarasa Mono SC",
+  "Sarasa Term SC",
+  "Noto Sans Mono CJK SC",
+  "Source Han Mono SC",
+  "Consolas",
+  "Courier New",
+  // CJK UI fonts (double-width; used only for missing mono glyphs)
+  "Microsoft YaHei UI",
+  "Microsoft YaHei",
+  "PingFang SC",
+  "Hiragino Sans GB",
+  "Noto Sans CJK SC",
+  "Source Han Sans SC",
+  "SimHei",
+  "Segoe UI",
+  "monospace",
+]
+  .map((f) => (f.includes(" ") ? `"${f}"` : f))
+  .join(", ");
+
 export const searchAddons = new Map<string, SearchAddon>();
 export const terminals = new Map<string, Terminal>();
 
@@ -60,14 +89,17 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     const config = useAppStore.getState().config;
 
     const term = new Terminal({
-      fontFamily: '"Cascadia Mono", "Cascadia Mono NF", "Microsoft YaHei UI", monospace',
+      fontFamily: TERMINAL_FONT_FAMILY,
       fontSize: config?.terminalFontSize ?? 14,
-      lineHeight: 1.15,
+      lineHeight: 1.2,
+      // Slightly wider letter spacing helps some CJK fallback faces.
+      letterSpacing: 0,
       cursorBlink: true,
       allowProposedApi: true,
       scrollback: 10_000,
       theme: GALAXY_THEME,
       rightClickSelectsWord: true,
+      // Windows ConPTY wrap + wide-char (CJK double-width) handling.
       windowsMode: true,
     });
     const fit = new FitAddon();
@@ -81,19 +113,23 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     );
     term.open(host);
 
-    // GPU renderer with graceful fallback (spec §3.2, §9.2).
+    // Canvas renderer is more reliable for CJK font fallback than WebGL's
+    // glyph atlas (missing faces → empty boxes). Still try WebGL; if it fails
+    // or loses context we stay on the default canvas path.
     let webgl: WebglAddon | null = null;
-    try {
-      webgl = new WebglAddon();
-      webgl.onContextLoss(() => {
-        // Context lost: release and continue on the fallback renderer.
-        webgl?.dispose();
+    const preferCanvasForCjk = prefersCjkTerminalFonts();
+    if (!preferCanvasForCjk) {
+      try {
+        webgl = new WebglAddon();
+        webgl.onContextLoss(() => {
+          webgl?.dispose();
+          webgl = null;
+        });
+        term.loadAddon(webgl);
+      } catch (err) {
+        console.warn("WebGL addon unavailable, using canvas renderer", err);
         webgl = null;
-      });
-      term.loadAddon(webgl);
-    } catch (err) {
-      console.warn("WebGL addon unavailable, using fallback renderer", err);
-      webgl = null;
+      }
     }
 
     fitRef.current = fit;
@@ -102,9 +138,9 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     searchAddons.set(pane.id, search);
 
     // Register replay/write surface for the batching pipeline.
-    registerTerminal({
+    const handle = {
       paneId: pane.id,
-      write: (data) => {
+      write: (data: string) => {
         if (useTerminalStore.getState().scrollLocked[pane.id]) {
           // stop-scroll trigger action: keep the viewport where the user left
           // it even while output keeps flowing.
@@ -121,12 +157,16 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
         }
         term.write(data);
       },
-      replay: (chunks) => chunks.forEach((c) => term.write(c.data)),
+      replay: (chunks: { data: string }[]) => chunks.forEach((c) => term.write(c.data)),
       truncatedNotice: () => term.write(`\r\n\x1b[33m${t("truncatedNotice")}\x1b[0m\r\n`),
-    });
+    };
+    registerTerminal(handle);
 
     // Input: direct, unbatched. Sync-input fans out to the whole session.
+    // Guard against disposed terminals still receiving key events briefly.
+    let inputAlive = true;
     const inputSub = term.onData((data) => {
+      if (!inputAlive) return;
       const sess = useAppStore.getState().sessions.find((s) => s.id === session.id);
       if (sess?.syncInput) {
         void ptyBroadcast(session.id, data);
@@ -140,6 +180,7 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
 
     // Initial sizing after first paint.
     const initialFit = requestAnimationFrame(() => {
+      if (!inputAlive) return;
       try {
         fit.fit();
         void ptyResize(pane.id, term.cols, term.rows);
@@ -150,6 +191,7 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     });
 
     const ro = new ResizeObserver(() => {
+      if (!inputAlive) return;
       try {
         const before = `${term.cols}x${term.rows}`;
         fit.fit();
@@ -163,14 +205,15 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     ro.observe(host);
 
     return () => {
+      inputAlive = false;
       cancelAnimationFrame(initialFit);
       ro.disconnect();
       inputSub.dispose();
       bellSub.dispose();
       webgl?.dispose();
-      unregisterTerminal(pane.id);
-      terminals.delete(pane.id);
-      searchAddons.delete(pane.id);
+      unregisterTerminal(pane.id, handle);
+      if (terminals.get(pane.id) === term) terminals.delete(pane.id);
+      if (searchAddons.get(pane.id) === search) searchAddons.delete(pane.id);
       term.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -196,4 +239,20 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
   void scrollLocked;
 
   return <div ref={hostRef} className="terminal-host" data-pane-id={pane.id} />;
+}
+
+/** Prefer canvas renderer when the UI language or OS is CJK-oriented. */
+function prefersCjkTerminalFonts(): boolean {
+  try {
+    const lang =
+      (typeof navigator !== "undefined" && (navigator.language || navigator.languages?.[0])) || "";
+    if (/^(zh|ja|ko)/i.test(lang)) return true;
+    // Config language from the app store (zh-CN default).
+    const cfgLang = useAppStore.getState().config?.language ?? "";
+    if (/^zh/i.test(cfgLang)) return true;
+  } catch {
+    /* ignore */
+  }
+  // Safe default on unknown environments: canvas is correct for CJK.
+  return true;
 }

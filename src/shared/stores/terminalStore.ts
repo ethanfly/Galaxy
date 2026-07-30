@@ -17,7 +17,9 @@ const registry = new Map<string, TerminalHandle>();
 export function registerTerminal(handle: TerminalHandle) {
   registry.set(handle.paneId, handle);
 }
-export function unregisterTerminal(paneId: string) {
+/** Only remove if this handle is still the registered one (StrictMode race). */
+export function unregisterTerminal(paneId: string, handle?: TerminalHandle) {
+  if (handle && registry.get(paneId) !== handle) return;
   registry.delete(paneId);
 }
 export function terminalFor(paneId: string): TerminalHandle | undefined {

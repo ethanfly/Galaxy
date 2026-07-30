@@ -49,6 +49,22 @@ impl PtyBackend for PortablePtyBackend {
         if !spec.cwd.is_empty() {
             cmd.cwd(&spec.cwd);
         }
+        // Prefer UTF-8 for child tools (Python/Node/etc.) so CJK is not emitted
+        // as the system ANSI code page when the app is UTF-8 aware.
+        #[cfg(windows)]
+        {
+            cmd.env("PYTHONIOENCODING", "utf-8");
+            cmd.env("PYTHONUTF8", "1");
+        }
+        #[cfg(not(windows))]
+        {
+            if std::env::var_os("LANG").is_none() {
+                cmd.env("LANG", "C.UTF-8");
+            }
+            if std::env::var_os("LC_ALL").is_none() {
+                cmd.env("LC_ALL", "C.UTF-8");
+            }
+        }
         for (k, v) in &spec.env {
             cmd.env(k, v);
         }

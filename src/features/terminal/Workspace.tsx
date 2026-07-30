@@ -3,6 +3,14 @@
 // split/close/move/sync actions.
 import { useCallback, useRef, useState } from "react";
 
+import {
+  IconClose,
+  IconMove,
+  IconPrompt,
+  IconSplitDown,
+  IconSplitRight,
+  IconSync,
+} from "../../shared/icons/Icons";
 import { layoutSetRatio, paneClose, paneSplit } from "../../shared/ipc/client";
 import type { LayoutNodeRust, Pane, Session } from "../../shared/ipc/types";
 import { TerminalView } from "./TerminalView";
@@ -11,7 +19,7 @@ import { t } from "../../shared/i18n";
 import { useAppStore } from "../../shared/stores/appStore";
 import { useTerminalStore } from "../../shared/stores/terminalStore";
 import { useUiStore } from "../../shared/stores/uiStore";
-import { layoutPanes } from "../../shared/utils";
+import { layoutPanes, unwrapPane } from "../../shared/utils";
 
 export function Workspace() {
   const sessions = useAppStore((s) => s.sessions);
@@ -65,7 +73,9 @@ function LayoutRenderer({
   path: boolean[];
 }) {
   if ("pane" in node) {
-    return <PaneCell pane={node.pane} session={session} />;
+    const pane = unwrapPane(node.pane as Parameters<typeof unwrapPane>[0]);
+    if (!pane) return null;
+    return <PaneCell pane={pane} session={session} />;
   }
   const { direction, ratio, first, second } = node.split;
   return (
@@ -182,32 +192,34 @@ function PaneCell({ pane, session }: { pane: Pane; session: Session }) {
       }}
     >
       <div className="pane-chrome">
-        <span style={{ color: "var(--text-lo)" }}>{pane.profile.icon ?? "❯"}</span>
+        <span className="pane-shell-icon" style={{ color: "var(--text-lo)" }}>
+          <IconPrompt size={12} />
+        </span>
         <span className="pane-title" title={pane.cwd}>
-          {pane.title || pane.profile.name}
+          {pane.title || pane.profile?.name || "终端"}
         </span>
         {pane.exitCode != null && (
           <span style={{ color: "var(--red-400)" }}>exit {pane.exitCode}</span>
         )}
         <button className="icon-btn" title={t("splitRight")} onClick={() => void doSplit("row")}>
-          ◫
+          <IconSplitRight />
         </button>
         <button className="icon-btn" title={t("splitDown")} onClick={() => void doSplit("column")}>
-          ⬓
+          <IconSplitDown />
         </button>
         <button className="icon-btn" title="移到其他标签" onClick={() => openMovePane(pane.id)}>
-          ⇥
+          <IconMove />
         </button>
         <button
           className={`icon-btn ${session.syncInput ? "active" : ""}`}
           title={t("syncInput")}
           onClick={() => void setSessionSync(session.id, !session.syncInput)}
         >
-          ⇉
+          <IconSync />
         </button>
         {layoutPanes(session.layout).length > 1 && (
           <button className="icon-btn" title={t("close")} onClick={() => void doClose()}>
-            ✕
+            <IconClose />
           </button>
         )}
       </div>

@@ -1,9 +1,9 @@
 // Agent history panel: project-scoped conversations, message viewer,
-// one-click resume (§5.4).
-import { useEffect, useState } from "react";
+// one-click resume (§5.4). Auto-scans when the panel opens / project changes.
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { agentOpenConversation, agentScan, agentScanCancel, agentMessages } from "../../shared/ipc/client";
-import type { AgentConversation, AgentScanResult } from "../../shared/ipc/types";
+import type { AgentConversation, AgentMessage, AgentScanResult } from "../../shared/ipc/types";
 import { onAgentScanDone } from "../../shared/ipc/events";
 import { AgentBadge, agentLabel } from "../terminal/AgentBadge";
 import { t, currentLang } from "../../shared/i18n";
@@ -19,11 +19,34 @@ export function AgentPanel() {
   const [error, setError] = useState<string | null>(null);
 
   const projectPath = project?.path;
+  const scanGen = useRef(0);
 
+  const scan = useCallback(async (path: string) => {
+    const gen = ++scanGen.current;
+    setScanning(true);
+    setError(null);
+    try {
+      const res = await agentScan(path);
+      if (scanGen.current !== gen) return;
+      setResult(res);
+    } catch (e) {
+      if (scanGen.current !== gen) return;
+      setError((e as Error).message);
+    } finally {
+      if (scanGen.current === gen) setScanning(false);
+    }
+  }, []);
+
+  // Auto-scan whenever the selected project changes (or panel mounts with one).
   useEffect(() => {
     setResult(null);
-    setScanning(false);
-  }, [projectPath]);
+    setError(null);
+    if (!projectPath) {
+      setScanning(false);
+      return;
+    }
+    void scan(projectPath);
+  }, [projectPath, scan]);
 
   useEffect(() => {
     const p = onAgentScanDone(({ projectPath: pp }) => {
@@ -34,48 +57,38 @@ export function AgentPanel() {
     };
   }, [projectPath]);
 
-  const scan = async () => {
-    if (!project) return;
-    setScanning(true);
-    setError(null);
-    try {
-      const res = await agentScan(project.path);
-      setResult(res);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setScanning(false);
-    }
-  };
-
   if (!project) {
     return <Empty text="选择项目后显示相关 Agent 会话" />;
   }
 
-  const unavailable = result?.availability.filter((a) => !a.available) ?? [];
+  // Only surface conversations that were actually found — hide empty / unavailable agents.
+  const conversations = result?.conversations ?? [];
 
   return (
     <div className="panel-body">
       <div className="panel-toolbar">
         <span style={{ flex: 1, color: "var(--text-lo)", fontSize: 12 }}>
           {project.name} 的 Agent 会话
+          {result && !scanning && (
+            <span style={{ marginLeft: 6 }}>· {conversations.length} 条</span>
+          )}
         </span>
         {scanning ? (
-          <button className="btn" onClick={() => void agentScanCancel()}>
+          <button type="button" className="btn" onClick={() => void agentScanCancel()}>
             取消
           </button>
         ) : (
-          <button className="btn primary" onClick={() => void scan()}>
+          <button type="button" className="btn primary" onClick={() => void scan(project.path)}>
             {t("scanAgents")}
           </button>
         )}
       </div>
       {error && <div style={{ color: "var(--red-400)" }}>{error}</div>}
       {scanning && <div style={{ color: "var(--text-lo)" }}>{t("scanning")}</div>}
-      {result && result.conversations.length === 0 && !scanning && (
+      {result && conversations.length === 0 && !scanning && (
         <Empty text="未发现该项目的 Agent 会话" />
       )}
-      {result?.conversations.map((c) => (
+      {conversations.map((c) => (
         <ConversationItem
           key={`${c.agentKind}:${c.externalId}`}
           conversation={c}
@@ -83,15 +96,6 @@ export function AgentPanel() {
           onView={() => setViewConv(c)}
         />
       ))}
-      {unavailable.length > 0 && (
-        <div style={{ marginTop: 8 }}>
-          {unavailable.map((a) => (
-            <div key={a.kind} style={{ color: "var(--text-lo)", fontSize: 11, padding: "2px 0" }}>
-              · {agentLabel(a.kind!)}: {a.reason}
-            </div>
-          ))}
-        </div>
-      )}
       {viewConv && <MessagesModal conversation={viewConv} onClose={() => setViewConv(null)} />}
     </div>
   );
@@ -120,10 +124,11 @@ function ConversationItem({
       </div>
       {err && <div style={{ color: "var(--red-400)", fontSize: 11 }}>{err}</div>}
       <div className="conv-actions">
-        <button className="btn" onClick={onView}>
+        <button type="button" className="btn" onClick={onView}>
           {t("viewMessages")}
         </button>
         <button
+          type="button"
           className="btn primary"
           disabled={busy}
           onClick={async () => {
@@ -140,7 +145,7 @@ function ConversationItem({
             }
           }}
         >
-          ↻ {t("resume")}
+          {busy ? "…" : t("resume")}
         </button>
       </div>
     </div>
@@ -154,11 +159,12 @@ function MessagesModal({
   conversation: AgentConversation;
   onClose: () => void;
 }) {
-  const [messages, setMessages] = useState<import("../../shared/ipc/types").AgentMessage[]>([]);
+  const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    setLoading(true);
     agentMessages(conversation, 200)
       .then((m) => setMessages(m))
       .catch((e) => setError((e as Error).message))

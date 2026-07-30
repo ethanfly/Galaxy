@@ -1,0 +1,88 @@
+name: Version & Tag
+
+# Bump semantic version (package.json + Cargo.toml + tauri.conf.json),
+# commit, tag vX.Y.Z, and push — which triggers the Release workflow.
+#
+# Run manually from Actions → Version & Tag → Run workflow.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Semver bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      dry_run:
+        description: Only print next version (no commit/tag/push)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Compute next version
+        id: ver
+        run: |
+          CURRENT=$(node scripts/bump-version.mjs)
+          # Dry compute without writing: use node inline
+          NEXT=$(node -e "
+            const cur='$CURRENT';
+            const [a,b,c]=cur.split('.').map(Number);
+            const k='${{ inputs.bump }}';
+            let n;
+            if(k==='major') n=[a+1,0,0];
+            else if(k==='minor') n=[a,b+1,0];
+            else n=[a,b,c+1];
+            console.log(n.join('.'));
+          ")
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "Current: $CURRENT → Next: $NEXT (${{ inputs.bump }})"
+
+      - name: Guard — tag must not exist
+        run: |
+          if git rev-parse "v${{ steps.ver.outputs.next }}" >/dev/null 2>&1; then
+            echo "Tag v${{ steps.ver.outputs.next }} already exists"
+            exit 1
+          fi
+
+      - name: Apply version
+        if: ${{ inputs.dry_run == false }}
+        run: node scripts/bump-version.mjs ${{ inputs.bump }}
+
+      - name: Commit, tag, push
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
+          if [ -f src-tauri/Cargo.lock ]; then git add src-tauri/Cargo.lock; fi
+          git commit -m "chore(release): v${{ steps.ver.outputs.next }}"
+          git tag "v${{ steps.ver.outputs.next }}"
+          git push origin HEAD:${{ github.ref_name }}
+          git push origin "v${{ steps.ver.outputs.next }}"
+
+      - name: Summary
+        run: |
+          echo "### Version bump" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **${{ steps.ver.outputs.current }}** → **${{ steps.ver.outputs.next }}** (\`${{ inputs.bump }}\`)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "- Dry run: no commit/tag created" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Tag: \`v${{ steps.ver.outputs.next }}\` (triggers **Release** workflow)" >> "$GITHUB_STEP_SUMMARY"
+          fi

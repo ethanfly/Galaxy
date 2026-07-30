@@ -12,7 +12,7 @@
 - **xterm.js WebGL** 渲染，初始化失败/上下文丢失自动回退，不中断 PTY
 - **命令块**（OSC 133 Shell Integration 优先 + 启发式兜底）：复制命令/输出/重跑/收藏，`blocks.jsonl` 限量 500（收藏不淘汰）
 - **三类搜索**：Ctrl+F 终端查找 · Ctrl+Shift+F 命令块 · Ctrl+R 统一历史/收藏 · Ctrl+P 命令面板
-- **六个 Agent 适配器**（Claude Code / Codex CLI / OpenCode / OMP / Grok Build / Crush）：历史扫描、消息查看、一键恢复注入、idle/working/blocked/done 状态与通知
+- **21 个 Agent 适配器**（Claude Code / Codex / OpenCode / OMP / Grok Build / Crush / Gemini / Copilot / Aider / Goose / Qwen / Kimi / Cline / Roo / Continue / Cursor / **Pi** / **Hermes** / OpenClaw / Antigravity / Amp）：历史扫描、消息查看、一键恢复注入、idle/working/blocked/done 状态与通知
 - **Git 面板与状态栏**（分支、ahead/behind、变更、checkout — 冲突原文显示，绝不自动 stash/reset）
 - **Workflow** 参数化模板（类型校验 + 解析预览 + 运行确认）与**触发器**（限长正则 + 冷却 + 通知/标记/响铃/停滚）
 - **设置中心**：通用/Workflows/布局模板/触发器/快捷键（冲突阻止）/诊断（脱敏报告）

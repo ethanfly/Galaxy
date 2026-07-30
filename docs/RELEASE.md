@@ -2,6 +2,41 @@
 
 本文件覆盖 §9.3 要求的安装、升级、卸载、签名、许可、隐私、变更记录与可复现构建步骤。
 
+## 0. 自动构建 / 版本 / 发布（GitHub Actions）
+
+| 流程 | Workflow | 触发 | 作用 |
+| --- | --- | --- | --- |
+| 持续集成 | `test.yml` | push/PR → `main` | 前端 tsc/vitest/build + Playwright UI；Rust `cargo test --locked` |
+| 版本号 | `version.yml` | Actions 手动运行 | 按 patch/minor/major 同步 `package.json` / `Cargo.toml` / `tauri.conf.json`，提交并打 `vX.Y.Z` 标签 |
+| 发布 | `release.yml` | 推送 `v*.*.*` 标签 或 手动 | Windows NSIS 安装包构建 →（可选）代码签名 → GitHub Release 上传 |
+
+### 发一版（推荐）
+
+1. 打开仓库 **Actions → Version & Tag → Run workflow**
+2. 选择 `patch` / `minor` / `major`
+3. 工作流会提交 `chore(release): vX.Y.Z` 并推送标签
+4. **Release** 工作流自动启动，产物挂到 [Releases](https://github.com/ethanfly/Galaxy/releases)
+
+本地等价：
+
+```bash
+npm run version:patch   # 或 minor / major
+git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json src-tauri/Cargo.lock
+git commit -m "chore(release): v$(npm run -s version:show)"
+git tag "v$(npm run -s version:show)"
+git push origin main --tags
+```
+
+### 可选 Secrets（不配也能构建发布，只是不签名/不启用 updater）
+
+| Secret | 用途 |
+| --- | --- |
+| `SM_CERTIFICATE_BASE64` | 代码签名 PFX（Base64） |
+| `SM_CERTIFICATE_PASSWORD` | PFX 密码 |
+| `TAURI_UPDATER_PUBKEY` | 更新公钥（写入 tauri.conf） |
+| `TAURI_SIGNING_PRIVATE_KEY` | 更新包签名私钥 |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 私钥密码 |
+
 ## 1. 构建环境（可复现）
 
 | 组件 | 版本要求 | 获取方式 |

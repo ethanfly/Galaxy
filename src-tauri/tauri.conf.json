@@ -34,7 +34,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "createUpdaterArtifacts": false,
     "icon": [
       "icons/32x32.png",
@@ -46,7 +48,10 @@
       "nsis": {
         "installerIcon": "icons/icon.ico",
         "installMode": "currentUser",
-        "languages": ["SimpChinese", "English"],
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
         "displayLanguageSelector": true,
         "compression": "lzma",
         "template": "installer-hooks.nsh"
@@ -59,8 +64,12 @@
       "active": false,
       "dialog": false,
       "pubkey": "",
-      "endpoints": ["https://releases.galaxy-terminal.dev/{{target}}/{{arch}}/{{current_version}}"],
-      "windows": { "installMode": "passive" }
+      "endpoints": [
+        "https://releases.galaxy-terminal.dev/{{target}}/{{arch}}/{{current_version}}"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }

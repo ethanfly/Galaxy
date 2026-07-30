@@ -64,7 +64,12 @@ impl Persistence {
 
     fn try_load_file(&self, path: &Path) -> Result<Store, AppError> {
         let raw = std::fs::read_to_string(path)?;
-        let store: Store = serde_json::from_str(&raw)
+        let mut value: serde_json::Value = serde_json::from_str(&raw)
+            .map_err(|e| AppError::Persistence(format!("解析 {} 失败: {e}", path.display())))?;
+        // Pre-flatten era stores used a double-nested pane shape from serde's
+        // externally-tagged struct variant. Unwrap so both formats load.
+        unwrap_legacy_double_nested_panes(&mut value);
+        let store: Store = serde_json::from_value(value)
             .map_err(|e| AppError::Persistence(format!("解析 {} 失败: {e}", path.display())))?;
         Ok(store)
     }
@@ -121,6 +126,35 @@ impl Persistence {
 }
 
 // --------------------------------------------------------------- migrations
+
+/// Legacy layout wire shape was `{ "pane": { "pane": { id, profile, ... } } }`.
+/// Current (flattened) shape is `{ "pane": { id, profile, ... } }`.
+fn unwrap_legacy_double_nested_panes(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(inner) = map.get("pane").cloned() {
+                if let serde_json::Value::Object(ref inner_map) = inner {
+                    // Double nest: outer key "pane" wraps another object that
+                    // itself has "pane" but no pane fields like "profile".
+                    if inner_map.contains_key("pane") && !inner_map.contains_key("profile") {
+                        if let Some(actual) = inner_map.get("pane") {
+                            map.insert("pane".into(), actual.clone());
+                        }
+                    }
+                }
+            }
+            for child in map.values_mut() {
+                unwrap_legacy_double_nested_panes(child);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                unwrap_legacy_double_nested_panes(item);
+            }
+        }
+        _ => {}
+    }
+}
 
 fn migrate_v1_to_v2(mut store: Store) -> Store {
     // v1 → v2: sessions gained `sort_order`; ensure defaults & normalization.

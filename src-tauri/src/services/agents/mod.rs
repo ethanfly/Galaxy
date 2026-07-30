@@ -1,4 +1,4 @@
-//! Agent adapters (spec §5.4). Six adapters implement one interface: scan,
+//! Agent adapters (spec §5.4). Adapters implement one interface: scan,
 //! project matching, metadata parsing, message reading, status inference and
 //! resume command generation. Agent files and SQLite databases are opened
 //! read-only; agent-owned history is never modified. Format drift, DB locks
@@ -9,6 +9,20 @@ pub mod opencode;
 pub mod omp;
 pub mod grok;
 pub mod crush;
+pub mod gemini;
+pub mod copilot;
+pub mod aider;
+pub mod goose;
+pub mod qwen;
+pub mod kimi;
+pub mod cline;
+pub mod continue_dev;
+pub mod cursor;
+pub mod pi;
+pub mod hermes;
+pub mod openclaw;
+pub mod antigravity;
+pub mod amp;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -159,6 +173,21 @@ impl AgentRegistry {
                 Arc::new(omp::OmpAdapter),
                 Arc::new(grok::GrokAdapter),
                 Arc::new(crush::CrushAdapter),
+                Arc::new(gemini::GeminiAdapter),
+                Arc::new(copilot::CopilotAdapter),
+                Arc::new(aider::AiderAdapter),
+                Arc::new(goose::GooseAdapter),
+                Arc::new(qwen::QwenAdapter),
+                Arc::new(kimi::KimiAdapter),
+                Arc::new(cline::ClineAdapter::cline()),
+                Arc::new(cline::ClineAdapter::roo()),
+                Arc::new(continue_dev::ContinueAdapter),
+                Arc::new(cursor::CursorAdapter),
+                Arc::new(pi::PiAdapter),
+                Arc::new(hermes::HermesAdapter),
+                Arc::new(openclaw::OpenClawAdapter),
+                Arc::new(antigravity::AntigravityAdapter),
+                Arc::new(amp::AmpAdapter),
             ],
             watermarks: Mutex::new(HashMap::new()),
             scan_generation: AtomicU64::new(0),

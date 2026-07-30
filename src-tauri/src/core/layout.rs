@@ -354,4 +354,19 @@ mod tests {
             _ => panic!(),
         }
     }
+
+    #[test]
+    fn pane_variant_serializes_flat_for_frontend_contract() {
+        let tree = LayoutNode::new_pane(pane("C:/tmp"));
+        let json = serde_json::to_value(&tree).unwrap();
+        // Expected: { "pane": { "id": ..., "profile": {...}, ... } }
+        // Not:      { "pane": { "pane": { ... } } }
+        let pane_obj = json.get("pane").expect("pane tag");
+        assert!(pane_obj.get("profile").is_some(), "profile must be at pane.*");
+        assert!(pane_obj.get("pane").is_none(), "must not double-nest pane");
+        assert!(pane_obj.get("id").is_some());
+        // Round-trip
+        let back: LayoutNode = serde_json::from_value(json).unwrap();
+        assert_eq!(back.pane_count(), 1);
+    }
 }

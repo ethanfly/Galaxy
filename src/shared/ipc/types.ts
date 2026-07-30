@@ -72,7 +72,22 @@ export type AgentKind =
   | "openCode"
   | "omp"
   | "grok"
-  | "crush";
+  | "crush"
+  | "gemini"
+  | "copilot"
+  | "aider"
+  | "goose"
+  | "qwen"
+  | "kimi"
+  | "cline"
+  | "roo"
+  | "continue"
+  | "cursor"
+  | "pi"
+  | "hermes"
+  | "openClaw"
+  | "antigravity"
+  | "amp";
 
 export type AgentStatus = "idle" | "working" | "blocked" | "done";
 

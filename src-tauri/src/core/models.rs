@@ -41,16 +41,61 @@ pub enum AgentKind {
     Omp,
     Grok,
     Crush,
+    /// Google Gemini CLI
+    Gemini,
+    /// GitHub Copilot CLI
+    Copilot,
+    /// Aider
+    Aider,
+    /// Block Goose
+    Goose,
+    /// Qwen Code
+    Qwen,
+    /// Kimi CLI
+    Kimi,
+    /// Cline (VS Code / CLI)
+    Cline,
+    /// Roo Code
+    Roo,
+    /// Continue.dev
+    Continue,
+    /// Cursor Agent
+    Cursor,
+    /// Pi coding agent (badlogic/pi-mono)
+    Pi,
+    /// Hermes Agent (Nous Research)
+    Hermes,
+    /// OpenClaw
+    OpenClaw,
+    /// Google Antigravity CLI
+    Antigravity,
+    /// Amp / Factory CLI
+    Amp,
 }
 
 impl AgentKind {
-    pub const ALL: [AgentKind; 6] = [
+    pub const ALL: [AgentKind; 21] = [
         AgentKind::ClaudeCode,
         AgentKind::Codex,
         AgentKind::OpenCode,
         AgentKind::Omp,
         AgentKind::Grok,
         AgentKind::Crush,
+        AgentKind::Gemini,
+        AgentKind::Copilot,
+        AgentKind::Aider,
+        AgentKind::Goose,
+        AgentKind::Qwen,
+        AgentKind::Kimi,
+        AgentKind::Cline,
+        AgentKind::Roo,
+        AgentKind::Continue,
+        AgentKind::Cursor,
+        AgentKind::Pi,
+        AgentKind::Hermes,
+        AgentKind::OpenClaw,
+        AgentKind::Antigravity,
+        AgentKind::Amp,
     ];
 
     pub fn id(self) -> &'static str {
@@ -61,6 +106,21 @@ impl AgentKind {
             AgentKind::Omp => "omp",
             AgentKind::Grok => "grok",
             AgentKind::Crush => "crush",
+            AgentKind::Gemini => "gemini",
+            AgentKind::Copilot => "copilot",
+            AgentKind::Aider => "aider",
+            AgentKind::Goose => "goose",
+            AgentKind::Qwen => "qwen",
+            AgentKind::Kimi => "kimi",
+            AgentKind::Cline => "cline",
+            AgentKind::Roo => "roo",
+            AgentKind::Continue => "continue",
+            AgentKind::Cursor => "cursor",
+            AgentKind::Pi => "pi",
+            AgentKind::Hermes => "hermes",
+            AgentKind::OpenClaw => "openclaw",
+            AgentKind::Antigravity => "antigravity",
+            AgentKind::Amp => "amp",
         }
     }
 
@@ -72,6 +132,21 @@ impl AgentKind {
             AgentKind::Omp => "OMP",
             AgentKind::Grok => "Grok Build",
             AgentKind::Crush => "Crush",
+            AgentKind::Gemini => "Gemini CLI",
+            AgentKind::Copilot => "GitHub Copilot CLI",
+            AgentKind::Aider => "Aider",
+            AgentKind::Goose => "Goose",
+            AgentKind::Qwen => "Qwen Code",
+            AgentKind::Kimi => "Kimi CLI",
+            AgentKind::Cline => "Cline",
+            AgentKind::Roo => "Roo Code",
+            AgentKind::Continue => "Continue",
+            AgentKind::Cursor => "Cursor Agent",
+            AgentKind::Pi => "Pi",
+            AgentKind::Hermes => "Hermes",
+            AgentKind::OpenClaw => "OpenClaw",
+            AgentKind::Antigravity => "Antigravity",
+            AgentKind::Amp => "Amp / Factory",
         }
     }
 }
@@ -160,7 +235,14 @@ pub enum SplitDirection {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum LayoutNode {
-    Pane { pane: Pane },
+    /// Flattened so the wire shape is `{ "pane": { id, profile, ... } }`
+    /// (matches the TS `LayoutNodeRust` contract). Without `flatten`, serde's
+    /// externally-tagged struct variant would emit a double nest
+    /// `{ "pane": { "pane": { ... } } }` and the UI would crash on `profile`.
+    Pane {
+        #[serde(flatten)]
+        pane: Pane,
+    },
     Split {
         direction: SplitDirection,
         /// Fraction of space given to `first` (0.05..=0.95).

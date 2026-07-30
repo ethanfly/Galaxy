@@ -1,12 +1,14 @@
 // Project sidebar with agent badges (spec §5.1).
 import { open } from "@tauri-apps/plugin-dialog";
+import { useState } from "react";
 
+import { IconPlus, IconTerminal } from "../../shared/icons/Icons";
 import { AgentBadge } from "../terminal/AgentBadge";
 import { ContextMenu } from "../tabs/TabBar";
 import { t } from "../../shared/i18n";
 import { useAppStore } from "../../shared/stores/appStore";
+import { useUiStore } from "../../shared/stores/uiStore";
 import { layoutPanes } from "../../shared/utils";
-import { useState } from "react";
 
 export function ProjectSidebar() {
   const sidebarOpen = useSidebar();
@@ -35,9 +37,10 @@ export function ProjectSidebar() {
         <button
           className="icon-btn"
           title={t("addProject")}
+          aria-label={t("addProject")}
           onClick={() => void pickFolder()}
         >
-          ＋
+          <IconPlus />
         </button>
       </div>
       <div className="project-list">
@@ -69,14 +72,15 @@ export function ProjectSidebar() {
               ))}
               <span className="project-actions">
                 <button
-                  className="icon-btn"
+                  className="icon-btn project-new-term"
                   title={t("newTerminal")}
+                  aria-label={t("newTerminal")}
                   onClick={(e) => {
                     e.stopPropagation();
                     void createSession(p.id);
                   }}
                 >
-                  ⌁
+                  <IconTerminal />
                 </button>
               </span>
             </div>
@@ -105,7 +109,6 @@ export function ProjectSidebar() {
   );
 }
 
-import { useUiStore } from "../../shared/stores/uiStore";
 function useSidebar() {
   return useUiStore((s) => s.sidebarOpen);
 }

@@ -81,8 +81,10 @@ pub struct PaneTracker {
     block_open: bool,
     block_command: String,
     block_output: String,
-    /// Command waiting to be attributed (from input submission heuristic).
+    /// Command waiting to be attributed (from input submission / OSC 133).
     pending_command: Option<String>,
+    /// Last time this tracker saw input or output (for idle flush).
+    last_activity: std::time::Instant,
 }
 
 impl Default for PaneTracker {
@@ -94,23 +96,42 @@ impl Default for PaneTracker {
             block_command: String::new(),
             block_output: String::new(),
             pending_command: None,
+            last_activity: std::time::Instant::now(),
         }
     }
 }
 
 impl PaneTracker {
     /// Key input flowed to the PTY; `\r` submits the accumulated line.
+    /// Used when shell integration is active (OSC 133 will open/close blocks).
     pub fn note_input_submission(&mut self, line: Option<String>) {
-        if !self.shell_integration {
-            // Close the previous block; its output is whatever we have.
-            // The manager asks us to `take_completed_block()` after this.
-            self.block_open = true;
-        }
+        self.last_activity = std::time::Instant::now();
         self.pending_command = line;
+    }
+
+    /// Start a heuristic command block (no OSC 133). Call after closing any previous block.
+    pub fn begin_heuristic_block(&mut self, command: String) {
+        self.last_activity = std::time::Instant::now();
+        self.block_open = true;
+        self.block_command = command;
+        self.block_output.clear();
+        self.pending_command = None;
     }
 
     pub fn has_open_block(&self) -> bool {
         self.block_open
+    }
+
+    pub fn touch(&mut self) {
+        self.last_activity = std::time::Instant::now();
+    }
+
+    /// Idle-flush candidate: open heuristic block with content and quiet long enough.
+    pub fn idle_block_ready(&self, idle: std::time::Duration) -> bool {
+        !self.shell_integration
+            && self.block_open
+            && (!self.block_command.is_empty() || !self.block_output.is_empty())
+            && self.last_activity.elapsed() >= idle
     }
 
     /// Close the open block heuristic-style and hand it to the manager.
@@ -168,6 +189,7 @@ impl PaneTracker {
             }
         }
         if self.block_open {
+            self.last_activity = std::time::Instant::now();
             self.block_output.push_str(&strip_ansi(&plain));
             if self.block_output.len() > BLOCK_OUTPUT_CAP {
                 let over = self.block_output.len() - BLOCK_OUTPUT_CAP;
@@ -239,14 +261,69 @@ pub fn detect_agent_kind(line: &str) -> Option<AgentKind> {
         .next()
         .unwrap_or(first)
         .trim_end_matches(".exe")
+        .trim_end_matches(".cmd")
+        .trim_end_matches(".bat")
+        .trim_end_matches(".ps1")
+        .to_lowercase();
+    // Also match `npx @scope/pkg` style second tokens.
+    let second = line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("")
+        .trim_start_matches('@')
         .to_lowercase();
     match stem.as_str() {
         "claude" => Some(AgentKind::ClaudeCode),
         "codex" => Some(AgentKind::Codex),
         "opencode" => Some(AgentKind::OpenCode),
         "omp" => Some(AgentKind::Omp),
-        "grok" => Some(AgentKind::Grok),
+        "grok" | "grok-build" => Some(AgentKind::Grok),
         "crush" => Some(AgentKind::Crush),
+        "gemini" | "gemini-cli" => Some(AgentKind::Gemini),
+        "copilot" | "gh-copilot" => Some(AgentKind::Copilot),
+        "aider" => Some(AgentKind::Aider),
+        "goose" => Some(AgentKind::Goose),
+        "qwen" | "qwen-code" | "qwen_code" => Some(AgentKind::Qwen),
+        "kimi" | "kimi-cli" => Some(AgentKind::Kimi),
+        "cline" | "cline-cli" => Some(AgentKind::Cline),
+        "roo" | "roo-cline" | "roo-code" => Some(AgentKind::Roo),
+        "continue" | "cn" => Some(AgentKind::Continue),
+        "cursor" | "cursor-agent" | "cursor-cli" => Some(AgentKind::Cursor),
+        "pi" | "pi-agent" | "pi-mono" => Some(AgentKind::Pi),
+        "hermes" | "hermes-agent" => Some(AgentKind::Hermes),
+        "openclaw" | "clawdbot" | "clawd" => Some(AgentKind::OpenClaw),
+        "antigravity" | "agy" => Some(AgentKind::Antigravity),
+        "amp" | "factory" | "droid" => Some(AgentKind::Amp),
+        // `npx @google/gemini-cli` / `npx @github/copilot` etc.
+        "npx" | "pnpm" | "yarn" | "bunx" => {
+            if second.contains("gemini") {
+                Some(AgentKind::Gemini)
+            } else if second.contains("copilot") {
+                Some(AgentKind::Copilot)
+            } else if second.contains("aider") {
+                Some(AgentKind::Aider)
+            } else if second.contains("opencode") {
+                Some(AgentKind::OpenCode)
+            } else if second.contains("qwen") {
+                Some(AgentKind::Qwen)
+            } else if second.contains("continue") {
+                Some(AgentKind::Continue)
+            } else if second.contains("hermes") {
+                Some(AgentKind::Hermes)
+            } else if second.contains("pi-mono") || second.ends_with("/pi") || second == "pi" {
+                Some(AgentKind::Pi)
+            } else {
+                None
+            }
+        }
+        // `gh copilot`
+        "gh" => {
+            if second == "copilot" {
+                Some(AgentKind::Copilot)
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
@@ -283,7 +360,11 @@ pub fn infer_agent_status(kind: AgentKind, stripped_tail: &str) -> AgentStatus {
         AgentKind::ClaudeCode => &["do you want to proceed", "1. yes", "permission to use"],
         AgentKind::Codex => &["allow?", "y/n", "press enter to confirm"],
         AgentKind::OpenCode => &["permission", "allow once", "confirm"],
-        AgentKind::Omp | AgentKind::Grok | AgentKind::Crush => &["confirm", "allow", "y/n"],
+        AgentKind::Gemini => &["allow", "approve", "y/n", "waiting for approval"],
+        AgentKind::Copilot => &["allow?", "confirm", "approve this", "y/n"],
+        AgentKind::Aider => &["add command output to the chat", "(y/n)", "add these files"],
+        AgentKind::Cline | AgentKind::Roo => &["approve", "reject", "auto-approve", "pending"],
+        _ => &["confirm", "allow", "y/n", "permission", "approve", "waiting for"],
     };
     if blocked_markers.iter().any(|m| lower.contains(m)) {
         return AgentStatus::Blocked;
@@ -292,7 +373,9 @@ pub fn infer_agent_status(kind: AgentKind, stripped_tail: &str) -> AgentStatus {
     let working_markers: &[&str] = match kind {
         AgentKind::ClaudeCode => &["esc to interrupt", "thinking", "tokens"],
         AgentKind::Codex => &["esc to interrupt", "working"],
-        _ => &["esc to interrupt", "working", "thinking", "spinner"],
+        AgentKind::Gemini => &["thinking", "running", "generating", "esc to cancel"],
+        AgentKind::Aider => &["applied edit", "committing", "running", "scanning repo"],
+        _ => &["esc to interrupt", "working", "thinking", "spinner", "running tool", "generating"],
     };
     if working_markers.iter().any(|m| lower.contains(&m.to_lowercase())) {
         return AgentStatus::Working;
@@ -350,14 +433,28 @@ mod tests {
     }
 
     #[test]
-    fn heuristic_closes_block_on_next_submission() {
+    fn heuristic_records_command_and_output() {
         let mut t = PaneTracker::default();
-        t.note_input_submission(Some("ls".into()));
+        t.begin_heuristic_block("ls".into());
         t.scan("file1 file2\n");
         assert!(t.has_open_block());
         let (cmd, out, _) = t.close_block(None).expect("has block");
-        assert_eq!(cmd, "");
+        assert_eq!(cmd, "ls");
         assert!(out.contains("file1"));
+    }
+
+    #[test]
+    fn heuristic_next_command_closes_previous() {
+        let mut t = PaneTracker::default();
+        t.begin_heuristic_block("echo a".into());
+        t.scan("a\n");
+        let prev = t.close_block(None).expect("first block");
+        assert_eq!(prev.0, "echo a");
+        t.begin_heuristic_block("echo b".into());
+        t.scan("b\n");
+        let next = t.close_block(None).expect("second block");
+        assert_eq!(next.0, "echo b");
+        assert!(next.1.contains('b'));
     }
 
     #[test]
@@ -392,6 +489,20 @@ mod tests {
     fn agent_executables_detected() {
         assert_eq!(detect_agent_kind("claude --resume x"), Some(AgentKind::ClaudeCode));
         assert_eq!(detect_agent_kind("C:\\tools\\codex.exe"), Some(AgentKind::Codex));
+        assert_eq!(detect_agent_kind("gemini"), Some(AgentKind::Gemini));
+        assert_eq!(detect_agent_kind("gh copilot"), Some(AgentKind::Copilot));
+        assert_eq!(detect_agent_kind("aider"), Some(AgentKind::Aider));
+        assert_eq!(detect_agent_kind("goose"), Some(AgentKind::Goose));
+        assert_eq!(detect_agent_kind("qwen"), Some(AgentKind::Qwen));
+        assert_eq!(detect_agent_kind("kimi"), Some(AgentKind::Kimi));
+        assert_eq!(detect_agent_kind("cline"), Some(AgentKind::Cline));
+        assert_eq!(detect_agent_kind("cursor-agent"), Some(AgentKind::Cursor));
+        assert_eq!(detect_agent_kind("pi --session x"), Some(AgentKind::Pi));
+        assert_eq!(detect_agent_kind("hermes chat"), Some(AgentKind::Hermes));
+        assert_eq!(detect_agent_kind("openclaw"), Some(AgentKind::OpenClaw));
+        assert_eq!(detect_agent_kind("antigravity"), Some(AgentKind::Antigravity));
+        assert_eq!(detect_agent_kind("amp"), Some(AgentKind::Amp));
+        assert_eq!(detect_agent_kind("npx @google/gemini-cli"), Some(AgentKind::Gemini));
         assert_eq!(detect_agent_kind("npm run dev"), None);
     }
 }

@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use super::backend::{PtyBackend, PtyProcess, PtySpec};
+use super::decode::StreamDecoder;
 use super::ring::{Replay, RingBuffer, RingChunk};
 use super::tracker::{infer_agent_status, make_block, push_tail, strip_ansi, PaneTracker};
 use crate::core::models::{AgentKind, AgentStatus};
@@ -22,6 +23,9 @@ const RING_CHUNK_CAP: usize = 2048;
 const BATCH_WINDOW: Duration = Duration::from_millis(8);
 const STATUS_THROTTLE: Duration = Duration::from_millis(250);
 const MAX_DRAIN_PER_WINDOW: usize = 256;
+/// Without OSC 133, finalize a quiet command block after this idle window so
+/// history records the last command without waiting for the next Enter.
+const HEURISTIC_IDLE_FLUSH: Duration = Duration::from_millis(900);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -208,14 +212,27 @@ impl PtyManager {
             .name(format!("pty-read-{}", &pane_id[..pane_id.len().min(8)]))
             .spawn(move || {
                 let mut buf = [0u8; 64 * 1024];
+                // Streaming decoder: preserves multi-byte CJK across read()
+                // boundaries and falls back to GBK when the shell is not UTF-8.
+                let mut decoder = StreamDecoder::new();
                 loop {
                     match reader.read(&mut buf) {
                         Ok(0) => {
+                            let tail = decoder.finish();
+                            if !tail.is_empty() {
+                                let _ = tx.send(PtyMsg::Output {
+                                    pane_id: pane_for_thread.clone(),
+                                    data: tail,
+                                });
+                            }
                             let _ = tx.send(PtyMsg::Eof { pane_id: pane_for_thread.clone() });
                             break;
                         }
                         Ok(n) => {
-                            let text = String::from_utf8_lossy(&buf[..n]).to_string();
+                            let text = decoder.push(&buf[..n]);
+                            if text.is_empty() {
+                                continue;
+                            }
                             if tx
                                 .send(PtyMsg::Output {
                                     pane_id: pane_for_thread.clone(),
@@ -228,6 +245,13 @@ impl PtyManager {
                         }
                         Err(e) => {
                             tracing::debug!(pane = %pane_for_thread, "pty reader ended: {e}");
+                            let tail = decoder.finish();
+                            if !tail.is_empty() {
+                                let _ = tx.send(PtyMsg::Output {
+                                    pane_id: pane_for_thread.clone(),
+                                    data: tail,
+                                });
+                            }
                             let _ = tx.send(PtyMsg::Eof { pane_id: pane_for_thread.clone() });
                             break;
                         }
@@ -273,10 +297,15 @@ impl PtyManager {
                                     self.sink.agent_status(pane_id, &sid, kind, status);
                                 }
                             }
-                            ctx.tracker.note_input_submission(Some(line));
-                            // Heuristic fallback: without shell integration the
-                            // previous block closes when a new command starts.
-                            if !ctx.tracker.shell_integration {
+                            if ctx.tracker.shell_integration {
+                                // OSC 133 B/C/D will open/close blocks; just stash the line.
+                                ctx.tracker.note_input_submission(Some(line));
+                            } else {
+                                // Heuristic path (PowerShell/cmd without shell integration):
+                                // 1) close previous block (if any)
+                                // 2) open a new block with this command text
+                                // Previously we cleared pending_command with None, so commands
+                                // were never attributed and history stayed empty.
                                 if let Some((cmd, out, code)) = ctx.tracker.close_block(None) {
                                     if !out.is_empty() || !cmd.is_empty() {
                                         let block = make_block(
@@ -290,13 +319,19 @@ impl PtyManager {
                                         self.sink.block_completed(&block);
                                     }
                                 }
-                                ctx.tracker.note_input_submission(None);
+                                if !line.trim().is_empty() {
+                                    ctx.tracker.begin_heuristic_block(line);
+                                }
                             }
                         }
                         '\u{7f}' | '\u{8}' => {
                             ctx.input_line.pop();
+                            ctx.tracker.touch();
                         }
-                        c if !c.is_control() => ctx.input_line.push(c),
+                        c if !c.is_control() => {
+                            ctx.input_line.push(c);
+                            ctx.tracker.touch();
+                        }
                         _ => {}
                     }
                 }
@@ -395,7 +430,14 @@ impl PtyManager {
         shutdown: Arc<AtomicBool>,
     ) {
         while !shutdown.load(Ordering::SeqCst) {
-            let Ok(first) = rx.recv() else { break };
+            let first = match rx.recv_timeout(HEURISTIC_IDLE_FLUSH) {
+                Ok(m) => m,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    Self::flush_idle_heuristic_blocks(&sink, &panes);
+                    continue;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            };
             let mut msgs = vec![first];
             // Same scheduling window: drain everything that arrived together.
             let window_start = Instant::now();
@@ -416,6 +458,41 @@ impl PtyManager {
                 }
             }
             Self::process_window(&msgs, &sink, &panes, &processes, &triggers);
+            Self::flush_idle_heuristic_blocks(&sink, &panes);
+        }
+    }
+
+    /// Finalize quiet heuristic blocks so a single command appears in history
+    /// without waiting for the next Enter.
+    fn flush_idle_heuristic_blocks(
+        sink: &Arc<dyn PtyEventSink>,
+        panes: &Arc<Mutex<HashMap<String, PaneCtx>>>,
+    ) {
+        let mut completed: Vec<(String, crate::core::models::CommandBlock)> = Vec::new();
+        {
+            let mut panes_guard = panes.lock().unwrap();
+            for (pane_id, ctx) in panes_guard.iter_mut() {
+                if !ctx.tracker.idle_block_ready(HEURISTIC_IDLE_FLUSH) {
+                    continue;
+                }
+                if let Some((cmd, out, code)) = ctx.tracker.close_block(None) {
+                    if out.is_empty() && cmd.is_empty() {
+                        continue;
+                    }
+                    let block = make_block(
+                        &ctx.project_id,
+                        &ctx.session_id,
+                        pane_id,
+                        cmd,
+                        out,
+                        code,
+                    );
+                    completed.push((pane_id.clone(), block));
+                }
+            }
+        }
+        for (_pane_id, block) in completed {
+            sink.block_completed(&block);
         }
     }
 
@@ -530,6 +607,20 @@ impl PtyManager {
             };
             if let Some(ctx) = panes.lock().unwrap().get_mut(&pane_id) {
                 ctx.exit_code = code;
+                // Flush any open command block on process exit.
+                if let Some((cmd, out, _)) = ctx.tracker.close_block(code) {
+                    if !out.is_empty() || !cmd.is_empty() {
+                        let block = make_block(
+                            &ctx.project_id,
+                            &ctx.session_id,
+                            &pane_id,
+                            cmd,
+                            out,
+                            code,
+                        );
+                        sink.block_completed(&block);
+                    }
+                }
             }
             processes.lock().unwrap().remove(&pane_id);
             sink.exit(&pane_id, code);

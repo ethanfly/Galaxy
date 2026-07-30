@@ -59,7 +59,9 @@ export function HistoryPanel() {
         </div>
       )}
       {error && <div style={{ color: "var(--red-400)" }}>{error}</div>}
-      {blocks.length === 0 && <Empty text="暂无命令块 — Shell Integration 会在命令完成后自动记录" />}
+      {blocks.length === 0 && (
+        <Empty text="暂无命令记录 — 在终端执行命令后会自动捕获（约 1 秒静默后写入；下一条命令也会结算上一条）" />
+      )}
       {blocks.map((b) => (
         <BlockItem key={b.id} block={b} paneId={b.paneId === firstPane ? firstPane! : b.paneId} onChanged={() => sessionId && refresh(sessionId)} />
       ))}

@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 
+import { IconClose } from "../icons/Icons";
+
 export function Modal({
   title,
   onClose,
@@ -38,7 +40,9 @@ export function Modal({
         {title != null && (
           <div className="modal-header">
             <div style={{ flex: 1 }}>{title}</div>
-            <button className="icon-btn" aria-label="关闭" onClick={onClose}>✕</button>
+            <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+              <IconClose />
+            </button>
           </div>
         )}
         {children}

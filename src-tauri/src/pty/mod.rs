@@ -1,4 +1,5 @@
 pub mod backend;
+pub mod decode;
 pub mod portable;
 pub mod ring;
 pub mod manager;
