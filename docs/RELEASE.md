@@ -73,7 +73,7 @@ npm run tauri build -- -- --locked   # 第二个 `--` 把 --locked 交给 cargo
 ## 3. NSIS 安装包与右键菜单
 
 - 安装模式：`currentUser`（无需管理员）；支持中/英文语言选择。
-- `src-tauri/installer-hooks.nsh` 自定义模板在 `postInstall` 写入 HKCU 资源管理器右键菜单（目录/目录背景/驱动器 → “在此处打开银河终端”，命令 `<exe> --open-here "%1"/"%V"`），卸载钩子全部清除。
+- `src-tauri/installer-hooks.nsh` 通过 `bundle.windows.nsis.installerHooks` 注入（**不是** `template`；`template` 会整份替换安装脚本，缺少 Section 会报 `no sections specified`）。`POSTINSTALL` 写入 HKCU 右键菜单，「在此处打开银河终端」；`PREUNINSTALL` 清除。
 - 应用内也可在 设置 → 通用 随时增删右键菜单（`context_menu_set` 命令，HKCU 不需要提权）。
 
 ## 4. 代码签名

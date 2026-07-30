@@ -54,7 +54,7 @@
         ],
         "displayLanguageSelector": true,
         "compression": "lzma",
-        "template": "installer-hooks.nsh"
+        "installerHooks": "./installer-hooks.nsh"
       }
     },
     "resources": []
