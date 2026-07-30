@@ -1,11 +1,8 @@
 name: Release
 
-# Builds Windows NSIS installer and publishes a GitHub Release.
-# Triggered by tags created via "Version & Tag" workflow or: git tag vX.Y.Z && git push --tags
-#
-# Optional secrets (build still works without them):
-#   SM_CERTIFICATE_BASE64 / SM_CERTIFICATE_PASSWORD
-#   TAURI_UPDATER_PUBKEY / TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+# Builds Windows NSIS + publishes GitHub Release when a version tag is pushed.
+# Prefer using "Version & Tag" (includes build). Use this for tags created locally:
+#   git tag v0.1.1 && git push origin v0.1.1
 
 on:
   push:
@@ -21,6 +18,8 @@ jobs:
   release:
     name: Build & publish
     runs-on: windows-latest
+    # Skip if Version & Tag already published this tag in the same minute (best-effort).
+    # Safe to re-run: softprops updates the release.
     steps:
       - uses: actions/checkout@v4
 
@@ -38,10 +37,10 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Install frontend deps
+      - name: Install deps
         run: npm ci
 
-      - name: Resolve version from tag
+      - name: Version from tag
         id: ver
         shell: pwsh
         run: |
@@ -50,9 +49,8 @@ jobs:
           $v = $Matches[1]
           "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          Write-Host "Release version: $v"
-          # Align manifests to the tag (source of truth)
           node scripts/bump-version.mjs $v
+          Write-Host "Building $tag"
 
       - name: Enable updater when secrets present
         shell: pwsh
@@ -60,7 +58,7 @@ jobs:
           TAURI_UPDATER_PUBKEY: ${{ secrets.TAURI_UPDATER_PUBKEY }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:TAURI_UPDATER_PUBKEY)) {
-            Write-Host "No TAURI_UPDATER_PUBKEY — updater artifacts disabled"
+            Write-Host "Updater disabled (no pubkey secret)"
             exit 0
           }
           $cfg = (Get-Content src-tauri/tauri.conf.json -Raw) | ConvertFrom-Json
@@ -68,7 +66,6 @@ jobs:
           $cfg.plugins.updater.pubkey = $env:TAURI_UPDATER_PUBKEY
           $cfg.bundle.createUpdaterArtifacts = $true
           ($cfg | ConvertTo-Json -Depth 40) | Set-Content src-tauri/tauri.conf.json -Encoding utf8
-          Write-Host "Updater enabled"
 
       - name: Test gate
         shell: pwsh
@@ -91,16 +88,15 @@ jobs:
           SM_CERT_PASS: ${{ secrets.SM_CERTIFICATE_PASSWORD }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:SM_CERT_BASE64)) {
-            Write-Host "No SM_CERTIFICATE_BASE64 — skipping code sign"
+            Write-Host "No signing cert — skip"
             exit 0
           }
           $cert = Join-Path $env:RUNNER_TEMP "gt-cert.pfx"
           [IO.File]::WriteAllBytes($cert, [Convert]::FromBase64String($env:SM_CERT_BASE64))
           $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
             Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
-          if (-not $signtool) { throw "signtool.exe not found" }
-          $targets = @()
-          $targets += Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue
+          if (-not $signtool) { throw "signtool not found" }
+          $targets = @(Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue)
           if (Test-Path "src-tauri/target/release/galaxy-terminal.exe") {
             $targets += Get-Item "src-tauri/target/release/galaxy-terminal.exe"
           }
@@ -109,7 +105,7 @@ jobs:
             & $signtool verify /pa $exe.FullName
           }
 
-      - name: License manifest
+      - name: Licenses
         run: npm run gen:licenses
         continue-on-error: true
 
@@ -132,14 +128,9 @@ jobs:
           ## Galaxy Terminal v$v
 
           ### Install
-          Download the NSIS installer (\`*-setup.exe\`) and run it (per-user install, no admin required).
+          Download the NSIS installer (``*-setup.exe``) and run it (per-user, no admin required).
 
-          ### Contents
-          - Windows x64 NSIS setup
-          - ``SHA256SUMS.txt``
-          - Docs: CHANGELOG / PRIVACY / RELEASE / third-party licenses
-
-          Built by GitHub Actions (``windows-latest``).
+          Built automatically on tag ``${{ steps.ver.outputs.tag }}``.
           "@ | Set-Content release-body.md -Encoding utf8
 
       - name: Publish GitHub Release

@@ -6,16 +6,19 @@
 
 | 流程 | Workflow | 触发 | 作用 |
 | --- | --- | --- | --- |
-| 持续集成 | `test.yml` | push/PR → `main` | 前端 tsc/vitest/build + Playwright UI；Rust `cargo test --locked` |
-| 版本号 | `version.yml` | Actions 手动运行 | 按 patch/minor/major 同步 `package.json` / `Cargo.toml` / `tauri.conf.json`，提交并打 `vX.Y.Z` 标签 |
-| 发布 | `release.yml` | 推送 `v*.*.*` 标签 或 手动 | Windows NSIS 安装包构建 →（可选）代码签名 → GitHub Release 上传 |
+| 持续集成 | `test.yml` | push/PR → `main` | **只跑测试**，不发版 |
+| **发版（推荐）** | `version.yml` | Actions **手动** Run | bump 版本 → 打标签 → **同一次流水线**构建 NSIS → 创建 GitHub Release |
+| 发版（标签） | `release.yml` | 推送 `v*.*.*`（本地 `git push --tags`） | 构建 NSIS → GitHub Release |
+
+> **重要：** 推送到 `main` 只会跑 **test**，不会自动出现在 Releases。  
+> GitHub 规定：用默认 `GITHUB_TOKEN` 推送的 tag **不会**再触发别的 workflow，所以「Version & Tag」里已经把 **构建 + 发布** 串在同一条流水线里。
 
 ### 发一版（推荐）
 
 1. 打开仓库 **Actions → Version & Tag → Run workflow**
-2. 选择 `patch` / `minor` / `major`
-3. 工作流会提交 `chore(release): vX.Y.Z` 并推送标签
-4. **Release** 工作流自动启动，产物挂到 [Releases](https://github.com/ethanfly/Galaxy/releases)
+2. 选择 `patch` / `minor` / `major`（不要勾 dry_run）
+3. 等待 Windows job 结束
+4. 打开 [Releases](https://github.com/ethanfly/Galaxy/releases) 下载 `*-setup.exe`
 
 本地等价：
 
