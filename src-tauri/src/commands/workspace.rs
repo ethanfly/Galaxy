@@ -873,8 +873,8 @@ mod tests {
     use crate::core::models::ProfileSource;
 
     #[test]
-    fn default_project_color_matches_the_signal_green_theme() {
-        assert_eq!(DEFAULT_PROJECT_COLOR, "#39b98a");
+    fn default_project_color_matches_the_monochrome_theme() {
+        assert_eq!(DEFAULT_PROJECT_COLOR, "#f5f6f7");
     }
 
     fn pane(id: &str) -> Pane {

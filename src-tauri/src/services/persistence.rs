@@ -15,7 +15,8 @@ use time::OffsetDateTime;
 
 use super::paths::DataPaths;
 use crate::core::models::{
-    Store, DEFAULT_PROJECT_COLOR, LEGACY_DEFAULT_PROJECT_COLOR, STORE_SCHEMA_VERSION,
+    Store, DEFAULT_PROJECT_COLOR, LEGACY_DEFAULT_PROJECT_COLOR, PREVIOUS_DEFAULT_PROJECT_COLOR,
+    STORE_SCHEMA_VERSION,
 };
 use crate::error::AppError;
 
@@ -103,6 +104,7 @@ impl Persistence {
                 1 => migrate_v1_to_v2(store),
                 2 => migrate_v2_to_v3(store),
                 3 => migrate_v3_to_v4(store),
+                4 => migrate_v4_to_v5(store),
                 v => {
                     return Err(AppError::Persistence(format!(
                         "未知的存储版本 {v}，无法迁移（当前支持 {STORE_SCHEMA_VERSION}）"
@@ -235,10 +237,24 @@ fn migrate_v3_to_v4(mut store: Store) -> Store {
             .color
             .eq_ignore_ascii_case(LEGACY_DEFAULT_PROJECT_COLOR)
         {
-            project.color = DEFAULT_PROJECT_COLOR.into();
+            project.color = PREVIOUS_DEFAULT_PROJECT_COLOR.into();
         }
     }
     store.schema_version = 4;
+    store
+}
+
+fn migrate_v4_to_v5(mut store: Store) -> Store {
+    // v4 -> v5: retire the built-in green without changing user colors.
+    for project in &mut store.projects {
+        if project
+            .color
+            .eq_ignore_ascii_case(PREVIOUS_DEFAULT_PROJECT_COLOR)
+        {
+            project.color = DEFAULT_PROJECT_COLOR.into();
+        }
+    }
+    store.schema_version = 5;
     store
 }
 
@@ -362,7 +378,7 @@ mod tests {
             id: "p1".into(),
             name: "demo".into(),
             path: "C:\\demo".into(),
-            color: "#39b98a".into(),
+            color: DEFAULT_PROJECT_COLOR.into(),
             default_profile_id: None,
             created_at: crate::core::models::now_rfc3339(),
             last_accessed_at: crate::core::models::now_rfc3339(),
@@ -450,11 +466,50 @@ mod tests {
             },
         ];
 
+        let v4 = migrate_v3_to_v4(store.clone());
+        assert_eq!(v4.projects[0].color, PREVIOUS_DEFAULT_PROJECT_COLOR);
+        assert_eq!(v4.projects[1].color, "#d04f4f");
+        assert_eq!(v4.schema_version, 4);
+
         let migrated = p.migrate(store).unwrap();
 
-        assert_eq!(migrated.projects[0].color, "#39b98a");
+        assert_eq!(migrated.projects[0].color, DEFAULT_PROJECT_COLOR);
         assert_eq!(migrated.projects[1].color, "#d04f4f");
         assert_eq!(migrated.schema_version, STORE_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migration_v4_replaces_only_the_previous_default_project_color() {
+        let (_tmp, paths) = tmp_paths();
+        let p = Persistence::new(paths).unwrap();
+        let mut store = Store::default();
+        store.schema_version = 4;
+        store.projects = vec![
+            crate::core::models::Project {
+                id: "old-default".into(),
+                name: "old-default".into(),
+                path: "C:\\old-default".into(),
+                color: "#39B98A".into(),
+                default_profile_id: None,
+                created_at: crate::core::models::now_rfc3339(),
+                last_accessed_at: crate::core::models::now_rfc3339(),
+            },
+            crate::core::models::Project {
+                id: "custom".into(),
+                name: "custom".into(),
+                path: "C:\\custom".into(),
+                color: "#d04f4f".into(),
+                default_profile_id: None,
+                created_at: crate::core::models::now_rfc3339(),
+                last_accessed_at: crate::core::models::now_rfc3339(),
+            },
+        ];
+
+        let migrated = p.migrate(store).unwrap();
+
+        assert_eq!(migrated.projects[0].color, "#f5f6f7");
+        assert_eq!(migrated.projects[1].color, "#d04f4f");
+        assert_eq!(migrated.schema_version, 5);
     }
 
     #[test]
@@ -524,7 +579,7 @@ mod tests {
             id: id.into(),
             name: id.into(),
             path: format!("C:\\{id}"),
-            color: "#39b98a".into(),
+            color: DEFAULT_PROJECT_COLOR.into(),
             default_profile_id: None,
             created_at: crate::core::models::now_rfc3339(),
             last_accessed_at: crate::core::models::now_rfc3339(),
@@ -603,7 +658,7 @@ mod tests {
                     id: format!("p{i}"),
                     name: format!("demo{i}"),
                     path: format!("C:\\demo{i}"),
-                    color: "#39b98a".into(),
+                    color: DEFAULT_PROJECT_COLOR.into(),
                     default_profile_id: None,
                     created_at: crate::core::models::now_rfc3339(),
                     last_accessed_at: crate::core::models::now_rfc3339(),

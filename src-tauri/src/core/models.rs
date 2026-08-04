@@ -16,7 +16,8 @@ pub fn now_rfc3339() -> String {
 
 // ---------------------------------------------------------------- Project
 
-pub const DEFAULT_PROJECT_COLOR: &str = "#39b98a";
+pub const DEFAULT_PROJECT_COLOR: &str = "#f5f6f7";
+pub const PREVIOUS_DEFAULT_PROJECT_COLOR: &str = "#39b98a";
 pub const LEGACY_DEFAULT_PROJECT_COLOR: &str = "#694dc9";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -382,7 +383,7 @@ pub struct GitBranch {
 // ---------------------------------------------------------------- Store root
 
 /// Bump on breaking change; migrations run stepwise from the on-disk version.
-pub const STORE_SCHEMA_VERSION: u32 = 4;
+pub const STORE_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
