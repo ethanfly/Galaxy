@@ -287,6 +287,8 @@ pub struct CommandBlock {
     pub ended_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_kind: Option<AgentKind>,
     #[serde(default)]
     pub favorite: bool,
 }

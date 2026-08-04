@@ -440,6 +440,7 @@ impl PtyManager {
                                 cmd,
                                 out,
                                 code,
+                                ctx.agent_kind,
                             )));
                         }
                     }
@@ -622,8 +623,15 @@ impl PtyManager {
                     if out.is_empty() && cmd.is_empty() {
                         continue;
                     }
-                    let block =
-                        make_block(&ctx.project_id, &ctx.session_id, pane_id, cmd, out, code);
+                    let block = make_block(
+                        &ctx.project_id,
+                        &ctx.session_id,
+                        pane_id,
+                        cmd,
+                        out,
+                        code,
+                        ctx.agent_kind,
+                    );
                     completed.push((pane_id.clone(), block));
                 }
             }
@@ -830,6 +838,7 @@ impl PtyManager {
                             cmd,
                             out,
                             code,
+                            ctx.agent_kind,
                         )));
                     }
                 }
@@ -990,7 +999,17 @@ impl PtyManager {
             ctx.exit_code = code;
             ctx.tracker.close_block(code).and_then(|(cmd, out, _)| {
                 (!out.is_empty() || !cmd.is_empty())
-                    .then(|| make_block(&ctx.project_id, &ctx.session_id, pane_id, cmd, out, code))
+                    .then(|| {
+                        make_block(
+                            &ctx.project_id,
+                            &ctx.session_id,
+                            pane_id,
+                            cmd,
+                            out,
+                            code,
+                            ctx.agent_kind,
+                        )
+                    })
             })
         };
         if let Some(block) = completed {

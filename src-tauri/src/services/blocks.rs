@@ -212,6 +212,7 @@ mod tests {
             started_at: crate::core::models::now_rfc3339(),
             ended_at: None,
             exit_code: Some(0),
+            agent_kind: None,
             favorite,
         }
     }
@@ -244,5 +245,23 @@ mod tests {
         store.append(block(2, false)).unwrap();
         assert_eq!(store.search("cargo", true).len(), 1);
         assert_eq!(store.search("cmd2", false).len(), 1);
+    }
+
+    #[test]
+    fn legacy_blocks_without_agent_kind_remain_loadable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("legacy.jsonl");
+        std::fs::write(
+            &path,
+            r#"{"id":"legacy","projectId":"p","sessionId":"s","paneId":"pn","command":"cargo test","output":"ok","startedAt":"2026-08-04T08:00:00Z","endedAt":"2026-08-04T08:00:01Z","exitCode":0,"favorite":false}
+"#,
+        )
+        .unwrap();
+
+        let store = BlockStore::load(&path).unwrap();
+        let blocks = store.list(None).blocks;
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].agent_kind, None);
     }
 }

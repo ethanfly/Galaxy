@@ -558,6 +558,7 @@ pub fn make_block(
     command: String,
     output: String,
     exit_code: Option<i32>,
+    agent_kind: Option<AgentKind>,
 ) -> CommandBlock {
     CommandBlock {
         id: crate::core::models::new_id(),
@@ -569,6 +570,7 @@ pub fn make_block(
         started_at: crate::core::models::now_rfc3339(),
         ended_at: Some(crate::core::models::now_rfc3339()),
         exit_code,
+        agent_kind,
         favorite: false,
     }
 }
@@ -737,5 +739,30 @@ mod tests {
             Some(AgentKind::Gemini)
         );
         assert_eq!(detect_agent_kind("npm run dev"), None);
+    }
+
+    #[test]
+    fn command_blocks_capture_agent_identity_without_guessing_shells() {
+        let agent_block = make_block(
+            "project",
+            "session",
+            "pane",
+            "codex".into(),
+            "working".into(),
+            Some(0),
+            Some(AgentKind::Codex),
+        );
+        let shell_block = make_block(
+            "project",
+            "session",
+            "pane",
+            "cargo test".into(),
+            "ok".into(),
+            Some(0),
+            None,
+        );
+
+        assert_eq!(agent_block.agent_kind, Some(AgentKind::Codex));
+        assert_eq!(shell_block.agent_kind, None);
     }
 }
