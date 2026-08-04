@@ -8,6 +8,7 @@ import { useAppStore } from "../../shared/stores/appStore";
 import { useTerminalStore } from "../../shared/stores/terminalStore";
 import { Modal } from "../../shared/components/Modal";
 import { truncate } from "../../shared/utils";
+import { IconStar } from "../../shared/icons/Icons";
 
 export function HistorySearchModal() {
   const open = useUiStore((s) => s.historySearchOpen);
@@ -97,7 +98,7 @@ export function HistorySearchModal() {
               onClick={() => void insertIntoTerminal(true)}
             >
               <span style={{ color: b.favorite ? "var(--amber-400)" : "var(--text-lo)" }}>
-                {b.favorite ? "★" : "·"}
+                <IconStar className="inline-icon" filled={b.favorite} size={12} />
               </span>
               <code>{truncate(b.command, 110)}</code>
             </div>

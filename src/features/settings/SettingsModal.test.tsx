@@ -54,4 +54,17 @@ describe("settings chapter navigation", () => {
     expect(general.getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("button", { name: "Workflows" }).getAttribute("aria-current")).toBeNull();
   });
+
+  it("names compact add and remove controls by their operation", async () => {
+    useAppStore.setState({
+      config: { ...config, statusbarComponents: ["cwd"] },
+      profiles: [],
+      error: null,
+    });
+
+    render(<SettingsModal />);
+
+    expect(await screen.findByRole("button", { name: "移除状态栏组件 cwd" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "添加自定义 Shell Profile" })).toBeTruthy();
+  });
 });

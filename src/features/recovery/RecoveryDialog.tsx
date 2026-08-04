@@ -6,6 +6,7 @@ import { useUiStore } from "../../shared/stores/uiStore";
 import { useAppStore } from "../../shared/stores/appStore";
 import { Modal } from "../../shared/components/Modal";
 import { t } from "../../shared/i18n";
+import { IconAlert } from "../../shared/icons/Icons";
 
 export function RecoveryDialog() {
   const open = useUiStore((s) => s.recoveryDialogOpen);
@@ -31,7 +32,15 @@ export function RecoveryDialog() {
   };
 
   return (
-    <Modal title={`⚠ ${t("crashTitle")}`} onClose={() => void choose(true)} width={480}>
+    <Modal
+      title={
+        <>
+          <IconAlert size={14} className="inline-icon" /> {t("crashTitle")}
+        </>
+      }
+      onClose={() => void choose(true)}
+      width={480}
+    >
       <div className="modal-body">
         <p style={{ color: "var(--text-md)", marginTop: 0 }}>{t("crashBody")}</p>
       </div>

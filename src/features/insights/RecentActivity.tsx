@@ -3,7 +3,7 @@ import { useState } from "react";
 import { blockRerun, blockSetFavorite } from "../../shared/ipc/client";
 import { t } from "../../shared/i18n";
 import type { RecentActivity as RecentActivityItem } from "../../shared/ipc/types";
-import { IconPlay, IconStar, IconTerminal } from "../../shared/icons/Icons";
+import { IconCopy, IconRerun, IconStar, IconTerminal } from "../../shared/icons/Icons";
 import { formatDateTime, truncate } from "../../shared/utils";
 
 export function RecentActivity({
@@ -47,7 +47,7 @@ export function RecentActivity({
                   setCopied(item.id);
                 }}
               >
-                <CopyIcon />
+                <IconCopy />
               </button>
               <button
                 type="button"
@@ -59,7 +59,7 @@ export function RecentActivity({
                   onChanged();
                 }}
               >
-                <IconStar />
+                <IconStar filled={item.favorite} />
               </button>
               <button
                 type="button"
@@ -69,7 +69,7 @@ export function RecentActivity({
                 aria-label={t("insightsRerun")}
                 onClick={() => void blockRerun(item.id, item.paneId)}
               >
-                <IconPlay />
+                <IconRerun />
               </button>
             </div>
           </div>
@@ -84,12 +84,4 @@ function formatDuration(ms: number | null) {
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
-}
-
-function CopyIcon() {
-  return (
-    <svg className="pixel-icon" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" aria-hidden="true">
-      <rect x="4.5" y="4.5" width="7" height="7" /><path d="M2.5 9.5h-1v-7h7v1" />
-    </svg>
-  );
 }

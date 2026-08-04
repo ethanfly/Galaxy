@@ -135,7 +135,7 @@ export function TabBar() {
                 aria-hidden
                 title={lampLabel(lamp)}
               />
-              {anyMark && <span className="tab-mark" aria-hidden>◆</span>}
+              {anyMark && <span className="tab-mark" aria-hidden="true" />}
               {agent && <AgentBadge kind={agent} />}
               {status === "working" && (
                 <span className="tab-status-icon working" aria-hidden>
@@ -164,8 +164,10 @@ export function TabBar() {
                 <span className="tab-title">{displayTitle(s)}</span>
               )}
               <button
+                type="button"
                 className="tab-close"
                 aria-label={`关闭 ${displayTitle(s)}`}
+                title={`关闭 ${displayTitle(s)}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   void closeSession(s.id);
@@ -179,6 +181,7 @@ export function TabBar() {
       </div>
       <div className="tabbar-actions">
         <button
+          type="button"
           className="icon-btn"
           title={`${t("newTerminal")} (Ctrl+Shift+T)`}
           aria-label={t("newTerminal")}

@@ -112,4 +112,12 @@ describe("TitleBar resize listener lifecycle", () => {
     expect(mark?.getAttribute("src")).toBe("./brand/galaxy-mark.svg");
     expect(container.querySelectorAll("img.icon-logo")).toHaveLength(1);
   });
+
+  it("keeps native window icon controls accessible", () => {
+    render(<TitleBar />);
+
+    expect(screen.getByRole("button", { name: "最小化" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "最大化" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "关闭" })).toBeTruthy();
+  });
 });

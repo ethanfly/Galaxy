@@ -62,11 +62,8 @@ html, body, #root {
   font-size: var(--fs-ui);
 }
 
-/* pixel-perfect crispness for the pixel-art accents */
-.pixelated { image-rendering: pixelated; }
-
 /* ---------------------------------------------------------- layout shell
-   Tab bar sits only above the workspace so its right edge (＋ 新建终端)
+   Tab bar sits only above the workspace so its right edge (new terminal)
    lines up with the left border of the right panel. Sidebar + panel span
    the tab row so vertical rules stay continuous (no staggered seams). */
 .app-shell {
@@ -205,12 +202,6 @@ html, body, #root {
   cursor: pointer;
 }
 .window-controls button:hover { background: var(--space-3); color: var(--text-hi); }
-.window-controls .pixel-icon {
-  display: block;
-  shape-rendering: crispEdges;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
-}
 .window-controls button.close:hover { background: var(--red-400); color: #12060b; }
 
 /* The authored SVG owns the complete flat brand mark. */
@@ -302,8 +293,8 @@ html, body, #root {
   background: transparent;
   color: var(--text-lo);
   border-radius: 2px;
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   cursor: pointer;
   line-height: 1;
   flex: none;
@@ -324,7 +315,6 @@ html, body, #root {
   flex: none;
   position: relative;
   z-index: 1;
-  image-rendering: pixelated;
   background: var(--border-strong);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
 }
@@ -360,8 +350,10 @@ html, body, #root {
   opacity: 0.45;
 }
 .tab-mark {
-  color: var(--amber-400);
-  font-size: 10px;
+  width: 6px;
+  height: 6px;
+  background: var(--status-blocked);
+  transform: rotate(45deg);
   flex: none;
   position: relative;
   z-index: 1;
@@ -389,7 +381,7 @@ html, body, #root {
   50% { opacity: 1; }
 }
 
-/* agent badge — flat pixel chip (no glow / scatter shadow) */
+/* Agent badge stays flat and compact. */
 .agent-badge {
   flex: none;
   font-size: 10px;
@@ -398,7 +390,6 @@ html, body, #root {
   border: 1px solid currentColor;
   border-radius: 2px;
   line-height: 15px;
-  image-rendering: pixelated;
   position: relative;
   z-index: 1;
   box-shadow: none;
@@ -433,7 +424,7 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   gap: 2px;
-  /* Match icon-btn row so ＋ sits flush against the panel seam */
+  /* Match the icon-button row against the panel seam. */
   width: 38px;
   flex: none;
   padding: 0;
@@ -442,6 +433,10 @@ html, body, #root {
 
 /* ---------------------------------------------------------- buttons & inputs */
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   border: 1px solid var(--border-strong);
   background: var(--bg-raised);
   color: var(--text-hi);
@@ -468,33 +463,23 @@ html, body, #root {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  min-height: 28px;
   border: 0;
   border-radius: 3px;
   background: transparent;
   color: var(--text-md);
   cursor: pointer;
-  font-size: 14px;
   line-height: 1;
-  /* Avoid subpixel-blurred glyphs on Windows UI fonts */
-  -webkit-font-smoothing: none;
-  text-rendering: geometricPrecision;
 }
 .icon-btn:hover { background: var(--space-3); color: var(--text-hi); }
 .icon-btn.active { color: var(--accent-strong); background: var(--space-3); }
-/* Pixel SVGs stay sharp at small sizes */
-.pixel-icon {
+.galaxy-icon {
   display: block;
   flex: none;
-  shape-rendering: crispEdges;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
   overflow: visible;
-}
-.icon-btn .pixel-icon {
-  width: 14px;
-  height: 14px;
 }
 .inline-icon {
   display: inline-block;
@@ -773,6 +758,7 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
   padding: 4px 2px 2px;
 }
 .git-muted { color: var(--text-lo); font-size: 12px; padding: 2px 4px; }
+.git-clean-state { display: inline-flex; align-items: center; gap: 6px; }
 .git-branch-list {
   display: flex;
   flex-direction: column;
@@ -815,9 +801,25 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
 .git-branch-mark {
   flex: none;
   width: 12px;
-  text-align: center;
+  height: 12px;
+  display: grid;
+  place-items: center;
   color: var(--text-lo);
-  font-size: 10px;
+}
+.git-branch-mark::before,
+.branch-state::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  box-sizing: border-box;
+}
+.git-branch-mark.current::before,
+.branch-state.current::before { background: currentColor; }
+.git-branch-mark.loading::before {
+  border-radius: 2px;
+  animation: loading-pulse 1s steps(2, end) infinite;
 }
 .git-branch-item.current .git-branch-mark { color: var(--accent-main); }
 .git-branch-name {
@@ -888,6 +890,15 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
 }
 .status-item.clickable { cursor: pointer; }
 .status-item.clickable:hover { background: var(--space-3); }
+.branch-state {
+  width: 10px;
+  height: 10px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--text-lo);
+  flex: none;
+}
+.branch-state.current { color: var(--accent-main); }
 .status-sep { color: var(--border-strong); flex: none; }
 .status-spacer { flex: 1; min-width: 8px; }
 .status-clock {

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { gitBranches, gitCheckout, gitStatus } from "../../shared/ipc/client";
 import type { GitBranch, GitFileChange, GitStatus } from "../../shared/ipc/types";
-import { IconGit, IconRefresh } from "../../shared/icons/Icons";
+import { IconCheck, IconGit, IconRefresh } from "../../shared/icons/Icons";
 import { t } from "../../shared/i18n";
 import { useAppStore } from "../../shared/stores/appStore";
 
@@ -166,9 +166,10 @@ export function GitPanel() {
                 title={b.current ? "当前分支" : `切换到 ${b.name}`}
                 onClick={() => void onCheckout(b.name)}
               >
-                <span className="git-branch-mark" aria-hidden="true">
-                  {b.current ? "●" : checkingOut === b.name ? "…" : "○"}
-                </span>
+                <span
+                  className={`git-branch-mark ${b.current ? "current" : ""} ${checkingOut === b.name ? "loading" : ""}`}
+                  aria-hidden="true"
+                />
                 <span className="git-branch-name">{b.name}</span>
                 {b.current && <span className="git-branch-tag">当前</span>}
               </button>
@@ -178,8 +179,9 @@ export function GitPanel() {
       </div>
 
       {status?.changes.length === 0 && (
-        <div className="git-muted" style={{ padding: "8px 0" }}>
-          工作区干净 ✓
+        <div className="git-muted git-clean-state" style={{ padding: "8px 0" }}>
+          <IconCheck size={13} className="inline-icon" />
+          <span>工作区干净</span>
         </div>
       )}
       <ChangeGroup title={`已暂存 (${staged.length})`} files={staged} cls="staged" />

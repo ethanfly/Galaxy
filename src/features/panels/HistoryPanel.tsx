@@ -7,6 +7,7 @@ import { onBlocksUpdated } from "../../shared/ipc/events";
 import { useAppStore } from "../../shared/stores/appStore";
 import { layoutPanes, truncate } from "../../shared/utils";
 import { t } from "../../shared/i18n";
+import { IconCheck, IconCopy, IconRerun, IconStar } from "../../shared/icons/Icons";
 
 export function HistoryPanel() {
   const session = useAppStore((s) => s.sessions.find((x) => x.id === s.currentSessionId));
@@ -94,29 +95,35 @@ export function BlockItem({
         <span>{b.exitCode != null ? `exit ${b.exitCode}` : "·"}</span>
       </div>
       <div className="block-actions">
-        <button className="btn" onClick={() => void copy("command")}>
-          {copied === "command" ? "已复制 ✓" : t("copyCommand")}
+        <button type="button" className="btn" onClick={() => void copy("command")}>
+          {copied === "command" ? <IconCheck /> : <IconCopy />}
+          {copied === "command" ? "已复制" : t("copyCommand")}
         </button>
-        <button className="btn" disabled={!b.output} onClick={() => void copy("output")}>
-          {copied === "output" ? "已复制 ✓" : t("copyOutput")}
+        <button type="button" className="btn" disabled={!b.output} onClick={() => void copy("output")}>
+          {copied === "output" ? <IconCheck /> : <IconCopy />}
+          {copied === "output" ? "已复制" : t("copyOutput")}
         </button>
         <button
+          type="button"
           className="btn"
           disabled={!b.command}
           onClick={() => void blockRerun(b.id, paneId)}
           title={t("rerun")}
+          aria-label={t("rerun")}
         >
-          ↻
+          <IconRerun />
         </button>
         <button
+          type="button"
           className={`btn ${b.favorite ? "primary" : ""}`}
           onClick={async () => {
             await blockSetFavorite(b.id, !b.favorite);
             onChanged();
           }}
           title={t("favorite")}
+          aria-label={t("favorite")}
         >
-          {b.favorite ? "★" : "☆"}
+          <IconStar filled={b.favorite} />
         </button>
       </div>
     </div>

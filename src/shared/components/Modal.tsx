@@ -40,7 +40,7 @@ export function Modal({
         {title != null && (
           <div className="modal-header">
             <div style={{ flex: 1 }}>{title}</div>
-            <button className="icon-btn" aria-label="关闭" onClick={onClose}>
+            <button type="button" className="icon-btn" title="关闭" aria-label="关闭" onClick={onClose}>
               <IconClose />
             </button>
           </div>

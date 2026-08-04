@@ -8,6 +8,7 @@ import { useAppStore } from "../../shared/stores/appStore";
 import { Modal } from "../../shared/components/Modal";
 import { formatDateTime, layoutPanes, truncate } from "../../shared/utils";
 import { t } from "../../shared/i18n";
+import { IconCopy, IconRerun, IconStar } from "../../shared/icons/Icons";
 
 export function BlockSearchModal() {
   const open = useUiStore((s) => s.blockSearchOpen);
@@ -70,7 +71,7 @@ function ResultsList({ results, onClose }: { results: CommandBlock[]; onClose: (
           <div style={{ flex: 1, minWidth: 0 }}>
             <code>{truncate(b.command || "(未捕获命令)", 96)}</code>
             <div style={{ fontSize: 11, color: "var(--text-lo)", marginTop: 2 }}>
-              {b.favorite ? "★ " : ""}
+              {b.favorite ? <IconStar className="inline-icon" filled size={12} /> : null}
               {formatDateTime(b.startedAt)}
               {b.exitCode != null ? ` · exit ${b.exitCode}` : ""}
               {b.output ? ` · ${truncate(b.output.replace(/\s+/g, " "), 80)}` : ""}
@@ -78,15 +79,19 @@ function ResultsList({ results, onClose }: { results: CommandBlock[]; onClose: (
           </div>
           <span className="result-hint">
             <button
+              type="button"
               className="icon-btn"
-              title="复制命令"
+              title={t("copyCommand")}
+              aria-label={t("copyCommand")}
               onClick={() => void navigator.clipboard.writeText(b.command)}
             >
-              ⧉
+              <IconCopy />
             </button>
             <button
+              type="button"
               className="icon-btn"
               title={t("rerun")}
+              aria-label={t("rerun")}
               onClick={async () => {
                 const app = useAppStore.getState();
                 const session = app.sessions.find((s) => s.id === app.currentSessionId);
@@ -98,7 +103,7 @@ function ResultsList({ results, onClose }: { results: CommandBlock[]; onClose: (
                 }
               }}
             >
-              ↻
+              <IconRerun />
             </button>
           </span>
         </div>

@@ -6,6 +6,7 @@ import { configResetShortcuts } from "../../shared/ipc/client";
 import type { AppConfig, ShortcutBinding } from "../../shared/ipc/types";
 import { chordSignature } from "../../shared/utils";
 import { t } from "../../shared/i18n";
+import { IconAlert } from "../../shared/icons/Icons";
 
 const COMMAND_LABELS: Record<string, string> = {
   "terminal.new": "新建终端",
@@ -58,7 +59,8 @@ export function ShortcutsSection({
       </p>
       {conflicts.length > 0 && (
         <div className="banner" style={{ marginBottom: 10 }}>
-          ⚠ 快捷键冲突：{conflicts.join("；")}
+          <IconAlert size={14} />
+          快捷键冲突：{conflicts.join("；")}
         </div>
       )}
       {draft.shortcuts.map((s) => {

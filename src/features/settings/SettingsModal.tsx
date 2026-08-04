@@ -14,6 +14,7 @@ import type {
   WorkflowParam,
 } from "../../shared/ipc/types";
 import { Modal } from "../../shared/components/Modal";
+import { IconAlert, IconCheck, IconClose, IconPlus } from "../../shared/icons/Icons";
 import { t } from "../../shared/i18n";
 import { setLanguage } from "../../shared/i18n";
 import { useAppStore } from "../../shared/stores/appStore";
@@ -78,7 +79,8 @@ export function SettingsModal() {
         <div className="settings-content">
           {error && (
             <div className="banner" style={{ marginBottom: 12 }}>
-              ⚠ {error}
+              <IconAlert size={14} />
+              <span>{error}</span>
             </div>
           )}
           {section === "general" && <GeneralSection draft={draft} onChange={setDraft} />}
@@ -230,13 +232,15 @@ function GeneralSection({
             <span key={`${c}-${i}`} className="kbd" style={{ display: "inline-flex", gap: 4 }}>
               {c}
               <button
+                type="button"
                 className="icon-btn"
-                style={{ width: 16, height: 16, fontSize: 10 }}
+                title={`${t("removeStatusbarComponent")} ${c}`}
+                aria-label={`${t("removeStatusbarComponent")} ${c}`}
                 onClick={() =>
                   update({ statusbarComponents: draft.statusbarComponents.filter((_, j) => j !== i) })
                 }
               >
-                ✕
+                <IconClose size={12} />
               </button>
             </span>
           ))}
@@ -298,7 +302,10 @@ function GeneralSection({
             onChange={(e) => setNewProfile({ ...newProfile, args: e.target.value })}
           />
           <button
-            className="btn"
+            type="button"
+            className="icon-btn"
+            title={t("addCustomProfile")}
+            aria-label={t("addCustomProfile")}
             disabled={!newProfile.name || !newProfile.program}
             onClick={() => {
               const p: ShellProfile = {
@@ -314,7 +321,7 @@ function GeneralSection({
               setNewProfile({ name: "", program: "", args: "" });
             }}
           >
-            ＋
+            <IconPlus />
           </button>
         </div>
       </div>
@@ -425,12 +432,15 @@ function WorkflowsSection({
                   }}
                 />
                 <button
+                  type="button"
                   className="icon-btn"
+                  title={`${t("removeWorkflowParameter")} ${p.name}`}
+                  aria-label={`${t("removeWorkflowParameter")} ${p.name}`}
                   onClick={() => {
                     updateWorkflow(idx, { ...wf, params: wf.params.filter((_, j) => j !== pi) });
                   }}
                 >
-                  ✕
+                  <IconClose />
                 </button>
               </div>
             </div>
@@ -439,6 +449,7 @@ function WorkflowsSection({
             <label />
             <div className="form-value">
               <button
+                type="button"
                 className="btn"
                 onClick={() =>
                   updateWorkflow(idx, {
@@ -450,13 +461,15 @@ function WorkflowsSection({
                   })
                 }
               >
-                ＋ 参数
+                <IconPlus size={13} className="inline-icon" />
+                <span>参数</span>
               </button>
             </div>
           </div>
         </div>
       ))}
       <button
+        type="button"
         className="btn"
         onClick={() => {
           const wf: Workflow = {
@@ -472,7 +485,8 @@ function WorkflowsSection({
           onChange({ ...draft, workflows: [...draft.workflows, wf] });
         }}
       >
-        ＋ 新建 Workflow
+        <IconPlus size={13} className="inline-icon" />
+        <span>新建 Workflow</span>
       </button>
     </div>
   );
@@ -667,6 +681,7 @@ function TriggersSection({
         </div>
       ))}
       <button
+        type="button"
         className="btn"
         onClick={() => {
           const tr: Trigger = {
@@ -682,7 +697,8 @@ function TriggersSection({
           onChange({ ...draft, triggers: [...draft.triggers, tr] });
         }}
       >
-        ＋ 新建触发器
+        <IconPlus size={13} className="inline-icon" />
+        <span>新建触发器</span>
       </button>
     </div>
   );
@@ -748,7 +764,12 @@ function DiagnosticsSection() {
               setTimeout(() => setCopied(false), 1200);
             }}
           >
-            {copied ? "已复制 ✓" : "复制报告"}
+            {copied ? (
+              <>
+                <IconCheck size={13} className="inline-icon" />
+                <span>已复制</span>
+              </>
+            ) : "复制报告"}
           </button>
         )}
       </div>

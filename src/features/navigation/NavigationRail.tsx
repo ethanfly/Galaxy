@@ -1,4 +1,4 @@
-import { IconHistory, IconSettings, IconTerminal } from "../../shared/icons/Icons";
+import { IconHistory, IconInsights, IconSettings, IconTerminal } from "../../shared/icons/Icons";
 import { t } from "../../shared/i18n";
 import { useUiStore } from "../../shared/stores/uiStore";
 
@@ -78,22 +78,5 @@ export function NavigationRail() {
         <IconSettings size={16} />
       </button>
     </nav>
-  );
-}
-
-function IconInsights({ size = 16 }: { size?: number }) {
-  return (
-    <svg
-      className="pixel-icon"
-      width={size}
-      height={size}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      aria-hidden="true"
-    >
-      <path d="M2.5 12.5h11M3.5 10V7.5M6.5 10V4.5M9.5 10V6M12.5 10V2.5" />
-    </svg>
   );
 }

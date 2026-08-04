@@ -23,6 +23,7 @@ import { useTerminalStore } from "./shared/stores/terminalStore";
 import { useUiStore } from "./shared/stores/uiStore";
 import { useShortcuts } from "./features/shortcuts/useShortcuts";
 import { t } from "./shared/i18n";
+import { IconAlert } from "./shared/icons/Icons";
 
 export default function App() {
   const init = useAppStore((s) => s.init);
@@ -131,8 +132,13 @@ export default function App() {
         >
           <TabBar />
           <div className="workspace">
-        {boot?.readOnly && <div className="banner">⚠ {t("readOnlyWarning")}</div>}
-        <Workspace />
+            {boot?.readOnly && (
+              <div className="banner">
+                <IconAlert size={14} />
+                {t("readOnlyWarning")}
+              </div>
+            )}
+            <Workspace />
             <FindBar />
           </div>
         </section>

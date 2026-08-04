@@ -9,7 +9,7 @@ import {
   IconPrompt,
   IconSplitDown,
   IconSplitRight,
-  IconSync,
+  IconSyncInput,
 } from "../../shared/icons/Icons";
 import { layoutSetRatio, paneClose, paneSplit } from "../../shared/ipc/client";
 import type { LayoutNodeRust, Pane, Session } from "../../shared/ipc/types";
@@ -204,24 +204,27 @@ function PaneCell({ pane, session }: { pane: Pane; session: Session }) {
         {pane.exitCode != null && (
           <span style={{ color: "var(--red-400)" }}>exit {pane.exitCode}</span>
         )}
-        <button className="icon-btn" title={t("splitRight")} onClick={() => void doSplit("row")}>
+        <button type="button" className="icon-btn" title={t("splitRight")} aria-label={t("splitRight")} onClick={() => void doSplit("row")}>
           <IconSplitRight />
         </button>
-        <button className="icon-btn" title={t("splitDown")} onClick={() => void doSplit("column")}>
+        <button type="button" className="icon-btn" title={t("splitDown")} aria-label={t("splitDown")} onClick={() => void doSplit("column")}>
           <IconSplitDown />
         </button>
-        <button className="icon-btn" title="移到其他标签" onClick={() => openMovePane(pane.id)}>
+        <button type="button" className="icon-btn" title={t("movePane")} aria-label={t("movePane")} onClick={() => openMovePane(pane.id)}>
           <IconMove />
         </button>
         <button
+          type="button"
           className={`icon-btn ${session.syncInput ? "active" : ""}`}
           title={t("syncInput")}
+          aria-label={t("syncInput")}
+          aria-pressed={session.syncInput}
           onClick={() => void setSessionSync(session.id, !session.syncInput)}
         >
-          <IconSync />
+          <IconSyncInput />
         </button>
         {layoutPanes(session.layout).length > 1 && (
-          <button className="icon-btn" title={t("close")} onClick={() => void doClose()}>
+          <button type="button" className="icon-btn" title={t("close")} aria-label={t("close")} onClick={() => void doClose()}>
             <IconClose />
           </button>
         )}
@@ -235,9 +238,9 @@ function PaneCell({ pane, session }: { pane: Pane; session: Session }) {
           items={[
             { label: t("splitRight"), onClick: () => void doSplit("row") },
             { label: t("splitDown"), onClick: () => void doSplit("column") },
-            { label: "移到其他标签", onClick: () => openMovePane(pane.id) },
+            { label: t("movePane"), onClick: () => openMovePane(pane.id) },
             {
-              label: t("syncInput") + (session.syncInput ? " ✓" : ""),
+              label: t("syncInput") + (session.syncInput ? ` · ${t("enabledState")}` : ""),
               onClick: () => void setSessionSync(session.id, !session.syncInput),
             },
             { label: t("close"), danger: true, onClick: () => void doClose() },

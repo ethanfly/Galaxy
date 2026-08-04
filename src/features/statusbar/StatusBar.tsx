@@ -12,6 +12,7 @@ import {
   IconGit,
   IconPlay,
   IconSessions,
+  IconSyncInput,
 } from "../../shared/icons/Icons";
 import { useBranchCheckout } from "../panels/GitPanel";
 import { t } from "../../shared/i18n";
@@ -147,6 +148,7 @@ function GitComponent() {
           {branches.map((b) => (
             <button
               key={b.name}
+              type="button"
               className="icon-btn"
               style={{ display: "flex", width: "100%", justifyContent: "flex-start", height: 24 }}
               onClick={async () => {
@@ -154,7 +156,7 @@ function GitComponent() {
                 setMenuOpen(false);
               }}
             >
-              {b.current ? "● " : "○ "}
+              <span className={`branch-state ${b.current ? "current" : ""}`} aria-hidden="true" />
               {b.name}
             </button>
           ))}
@@ -188,7 +190,11 @@ function SessionsComponent() {
       <span>
         {sessions.length}s · {panes}p
       </span>
-      {session.syncInput && <span style={{ color: "var(--cyan-400)" }}>⇄</span>}
+      {session.syncInput && (
+        <span style={{ color: "var(--status-run)" }} title={t("syncInput")}>
+          <IconSyncInput size={11} />
+        </span>
+      )}
     </span>
   );
 }
