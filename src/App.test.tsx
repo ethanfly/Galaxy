@@ -18,7 +18,9 @@ vi.mock("./features/shortcuts/useShortcuts", () => ({ useShortcuts: () => {} }))
 vi.mock("./features/titlebar/TitleBar", () => ({ TitleBar: () => null }));
 vi.mock("./features/tabs/TabBar", () => ({ TabBar: () => null }));
 vi.mock("./features/projects/ProjectSidebar", () => ({ ProjectSidebar: () => null }));
-vi.mock("./features/terminal/Workspace", () => ({ Workspace: () => null }));
+vi.mock("./features/terminal/Workspace", () => ({
+  Workspace: () => <div data-testid="workspace-instance" />,
+}));
 vi.mock("./features/panels/RightPanel", () => ({ RightPanel: () => null }));
 vi.mock("./features/statusbar/StatusBar", () => ({ StatusBar: () => null }));
 vi.mock("./features/search/FindBar", () => ({ FindBar: () => null }));
@@ -32,6 +34,7 @@ vi.mock("./features/terminal/MovePaneModal", () => ({ MovePaneModal: () => null 
 
 import App from "./App";
 import { useAppStore } from "./shared/stores/appStore";
+import { useUiStore } from "./shared/stores/uiStore";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -64,6 +67,7 @@ describe("App global event listener lifecycle", () => {
       sessions: [],
       unreadCount: 0,
     });
+    useUiStore.setState({ workspaceView: "terminal", contextSidebarOpen: true });
   });
 
   afterEach(() => {
@@ -100,5 +104,22 @@ describe("App global event listener lifecycle", () => {
     });
 
     expect(unlisten).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the terminal workspace mounted while insights is active", () => {
+    render(<App />);
+    const terminalSurface = document.querySelector<HTMLElement>("[data-testid=terminal-surface]");
+    const workspace = document.querySelector<HTMLElement>("[data-testid=workspace-instance]");
+
+    expect(terminalSurface).not.toBeNull();
+    expect(workspace).not.toBeNull();
+    expect(terminalSurface?.getAttribute("aria-hidden")).toBe("false");
+
+    act(() => useUiStore.getState().setWorkspaceView("insights"));
+
+    expect(document.querySelector("[data-testid=terminal-surface]")).toBe(terminalSurface);
+    expect(document.querySelector("[data-testid=workspace-instance]")).toBe(workspace);
+    expect(terminalSurface?.getAttribute("aria-hidden")).toBe("true");
+    expect(document.querySelector("[data-testid=insights-surface]")).not.toBeNull();
   });
 });

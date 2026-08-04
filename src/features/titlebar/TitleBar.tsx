@@ -38,9 +38,11 @@ export function TitleBar() {
   );
   const unread = useAppStore((s) => s.unreadCount);
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
+  const workspaceView = useUiStore((s) => s.workspaceView);
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
   const rightPanelTab = useUiStore((s) => s.rightPanelTab);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
+  const setWorkspaceView = useUiStore((s) => s.setWorkspaceView);
   const togglePanel = useUiStore((s) => s.togglePanel);
   const openSettings = useUiStore((s) => s.openSettings);
   const [maximized, setMaximized] = useState(false);
@@ -110,6 +112,27 @@ export function TitleBar() {
             <span>{project.name}</span>
           </span>
         )}
+      </div>
+
+      <div className="workspace-switcher" role="tablist" aria-label={t("workspaceView")}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={workspaceView === "terminal"}
+          className={workspaceView === "terminal" ? "active" : ""}
+          onClick={() => setWorkspaceView("terminal")}
+        >
+          {t("terminal")}
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={workspaceView === "insights"}
+          className={workspaceView === "insights" ? "active" : ""}
+          onClick={() => setWorkspaceView("insights")}
+        >
+          {t("insights")}
+        </button>
       </div>
 
       <div className="titlebar-tools" role="toolbar" aria-label={t("rightPanel")}>

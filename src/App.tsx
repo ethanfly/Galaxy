@@ -2,7 +2,8 @@ import { useEffect } from "react";
 
 import { TitleBar } from "./features/titlebar/TitleBar";
 import { TabBar } from "./features/tabs/TabBar";
-import { ProjectSidebar } from "./features/projects/ProjectSidebar";
+import { NavigationRail } from "./features/navigation/NavigationRail";
+import { ContextSidebar } from "./features/navigation/ContextSidebar";
 import { Workspace } from "./features/terminal/Workspace";
 import { RightPanel } from "./features/panels/RightPanel";
 import { StatusBar } from "./features/statusbar/StatusBar";
@@ -28,6 +29,7 @@ export default function App() {
   const boot = useAppStore((s) => s.boot);
   const error = useAppStore((s) => s.error);
   const ingest = useTerminalStore((s) => s.ingest);
+  const workspaceView = useUiStore((s) => s.workspaceView);
 
   useShortcuts();
 
@@ -118,13 +120,27 @@ export default function App() {
   return (
     <div className="app-shell">
       <TitleBar />
-      <TabBar />
-      <ProjectSidebar />
-      <div className="workspace">
+      <NavigationRail />
+      <ContextSidebar />
+      <main className="main-stage">
+        <section
+          className={`terminal-surface ${workspaceView === "terminal" ? "active" : "inactive"}`}
+          data-testid="terminal-surface"
+          aria-hidden={workspaceView !== "terminal"}
+        >
+          <TabBar />
+          <div className="workspace">
         {boot?.readOnly && <div className="banner">⚠ {t("readOnlyWarning")}</div>}
         <Workspace />
-        <FindBar />
-      </div>
+            <FindBar />
+          </div>
+        </section>
+        <section
+          className={`insights-surface ${workspaceView === "insights" ? "active" : "inactive"}`}
+          data-testid="insights-surface"
+          aria-hidden={workspaceView !== "insights"}
+        />
+      </main>
       <RightPanel />
       <StatusBar />
       <BlockSearchModal />
