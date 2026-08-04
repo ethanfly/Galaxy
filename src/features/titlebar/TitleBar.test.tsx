@@ -105,11 +105,11 @@ describe("TitleBar resize listener lifecycle", () => {
     expect(sidebarButton.getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("uses the single authored Galaxy mark in the title bar", () => {
+  it("uses the single generated Galaxy PNG in the title bar", () => {
     const { container } = render(<TitleBar />);
     const mark = container.querySelector<HTMLImageElement>("img.icon-logo");
 
-    expect(mark?.getAttribute("src")).toBe("./brand/galaxy-mark.svg");
+    expect(mark?.getAttribute("src")).toBe("./icon.png");
     expect(container.querySelectorAll("img.icon-logo")).toHaveLength(1);
   });
 

@@ -208,7 +208,7 @@ html, body, #root {
 .window-controls button:hover { background: var(--space-3); color: var(--text-hi); }
 .window-controls button.close:hover { background: var(--red-400); color: var(--space-0); }
 
-/* The authored SVG owns the complete flat brand mark. */
+/* The generated PNG keeps in-app branding aligned with package icons. */
 .icon-logo {
   width: 18px;
   height: 18px;
