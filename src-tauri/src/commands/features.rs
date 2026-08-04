@@ -14,6 +14,7 @@ use crate::core::models::{
 use crate::core::workflow::{ResolvedWorkflow, Workflow};
 use crate::error::{AppError, CmdError, CmdResult, IntoCmd};
 use crate::services::blocks::BlockListResult;
+use crate::services::insights::{aggregate, InsightsQuery, InsightsRange, InsightsSummary};
 use crate::services::agents::AgentAvailability;
 use crate::state::AppState;
 
@@ -68,6 +69,27 @@ pub async fn block_rerun(
 #[tauri::command]
 pub async fn blocks_clear_non_favorites(state: State<'_, Arc<AppState>>) -> CmdResult<usize> {
     state.blocks.clear_non_favorites().cmd()
+}
+
+#[tauri::command]
+pub async fn insights_summary(
+    state: State<'_, Arc<AppState>>,
+    project_id: Option<String>,
+    range: InsightsRange,
+    timezone_offset_minutes: i32,
+) -> CmdResult<InsightsSummary> {
+    let blocks = state.blocks.list(None).blocks;
+    let projects = state.store.read().projects.clone();
+    Ok(aggregate(
+        &blocks,
+        &projects,
+        InsightsQuery {
+            project_id,
+            range,
+            timezone_offset_minutes,
+        },
+        time::OffsetDateTime::now_utc(),
+    ))
 }
 
 // ---------------------------------------------------------------- agents

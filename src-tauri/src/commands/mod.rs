@@ -41,6 +41,7 @@ macro_rules! all_commands {
             crate::commands::features::block_set_favorite,
             crate::commands::features::block_rerun,
             crate::commands::features::blocks_clear_non_favorites,
+            crate::commands::features::insights_summary,
             crate::commands::features::agent_scan,
             crate::commands::features::agent_scan_cancel,
             crate::commands::features::agent_availability,

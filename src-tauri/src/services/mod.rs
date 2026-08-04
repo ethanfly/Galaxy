@@ -4,5 +4,6 @@ pub mod blocks;
 pub mod logging;
 pub mod shell_detect;
 pub mod git;
+pub mod insights;
 pub mod diagnostics;
 pub mod agents;
