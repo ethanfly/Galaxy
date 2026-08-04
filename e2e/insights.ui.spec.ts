@@ -25,7 +25,7 @@ async function mockInsightsApp(page: Page) {
       featureFlags: { commandBlocks: true, agentPanel: true, gitPanel: true, workflows: true, triggers: true },
     };
     const projects = [
-      { id: "p1", name: "Galaxy Terminal", path: "E:\\workspace\\galaxy", color: "#67d9ad", createdAt: "2025-01-01T00:00:00Z" },
+      { id: "p1", name: "Galaxy Terminal", path: "E:\\workspace\\galaxy", color: "#f5f6f7", createdAt: "2025-01-01T00:00:00Z" },
       { id: "p2", name: "Telemetry Lab", path: "E:\\workspace\\telemetry", color: "#d0b36d", createdAt: "2025-01-02T00:00:00Z" },
     ];
     const insights = {
@@ -78,6 +78,16 @@ test.describe("workspace insights", () => {
     await expect(page.getByRole("heading", { name: "工作区洞察" })).toBeVisible();
     await expect(page.getByRole("gridcell")).toHaveCount(365);
     await expect(page.getByText("cargo test --locked")).toBeVisible();
+    await expect(page.locator(".activity-level-0").first()).toHaveCSS("background-color", "rgb(23, 26, 29)");
+    await expect(page.locator(".activity-level-4").first()).toHaveCSS("background-color", "rgb(238, 240, 241)");
+    await expect(page.locator(".trend-line")).toHaveCSS("stroke", "rgb(245, 246, 247)");
+    const segments = page.locator(".agent-distribution-bar i");
+    const markers = page.locator(".agent-distribution-row .agent-color");
+    for (let index = 0; index < 3; index += 1) {
+      const segmentColor = await segments.nth(index).evaluate((node) => getComputedStyle(node).backgroundColor);
+      const markerColor = await markers.nth(index).evaluate((node) => getComputedStyle(node).backgroundColor);
+      expect(segmentColor).toBe(markerColor);
+    }
     await page.screenshot({ path: "test-results/insights-desktop.png", fullPage: true });
 
     await page.setViewportSize({ width: 800, height: 760 });

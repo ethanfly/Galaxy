@@ -6,7 +6,7 @@ async function mockTerminalSession(page: Page, includeHiddenSession = false) {
       id: "project-ime",
       name: "IME",
       path: "C:\\workspace\\ime",
-      color: "#39b98a",
+      color: "#f5f6f7",
       createdAt: "2026-08-03T00:00:00Z",
       lastAccessedAt: "2026-08-03T00:00:00Z",
     };
@@ -466,12 +466,12 @@ test("terminal metadata updates do not steal focus from an overlay", async ({ pa
   await expect(search).toBeFocused();
 });
 
-test("terminal canvas uses the charcoal workspace surface", async ({ page }) => {
+test("terminal canvas uses the deep-space monochrome surface", async ({ page }) => {
   await mockTerminalSession(page);
   await page.goto("/");
   const terminal = page.locator(".terminal-host").first();
   await expect(terminal.locator(".xterm-screen")).toBeVisible();
-  await expect(terminal).toHaveCSS("background-color", "rgb(11, 14, 15)");
+  await expect(terminal).toHaveCSS("background-color", "rgb(3, 4, 5)");
 
   await page.evaluate(() => {
     (window as unknown as { __emitTauri: (event: string, payload: unknown) => void }).__emitTauri(

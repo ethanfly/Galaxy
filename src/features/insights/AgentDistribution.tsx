@@ -11,18 +11,18 @@ export function AgentDistribution({ agents }: { agents: AgentInsight[] }) {
         <span>{agents.length} 种工作模式</span>
       </header>
       <div className="agent-distribution-bar" aria-hidden="true">
-        {agents.map((agent) => (
+        {agents.map((agent, index) => (
           <i
             key={agent.agentKind ?? "shell"}
-            className={agent.agentKind ? `kind-${agent.agentKind}` : "kind-shell"}
+            className={`agent-series-${index % 5}`}
             style={{ flexGrow: agent.commandCount / total }}
           />
         ))}
       </div>
       <div className="agent-distribution-list">
-        {agents.map((agent) => (
+        {agents.map((agent, index) => (
           <div className="agent-distribution-row" key={agent.agentKind ?? "shell"}>
-            <span className={`agent-color kind-${agent.agentKind ?? "shell"}`} />
+            <span className={`agent-color agent-series-${index % 5}`} />
             <span>{agent.agentKind ? agentLabel(agent.agentKind) : "普通 Shell"}</span>
             <span>{agent.sessionCount} 个会话</span>
             <strong>{agent.commandCount}</strong>

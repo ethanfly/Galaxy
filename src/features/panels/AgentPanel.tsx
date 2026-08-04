@@ -182,7 +182,7 @@ function MessagesModal({
             <div
               style={{
                 fontSize: 11,
-                color: m.role === "user" ? "var(--cyan-400)" : "var(--accent-soft)",
+                color: m.role === "user" ? "var(--text-hi)" : "var(--accent-soft)",
                 marginBottom: 2,
               }}
             >

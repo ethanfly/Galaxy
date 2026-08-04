@@ -113,18 +113,23 @@ test.describe("app shell", () => {
     await expect(page.locator(".empty-workspace")).toBeVisible();
   });
 
-  test("uses compact navigation and responsive signal-green settings chapters", async ({ page }) => {
+  test("uses compact navigation and responsive monochrome settings chapters", async ({ page }) => {
     await mockTauri(page);
     await page.goto("/");
 
     await expect(page.locator(".navigation-rail button")).toHaveCount(4);
+    await expect(page.locator(".titlebar img.icon-logo")).toHaveCount(1);
+    await expect(page.locator(".navigation-rail .rail-brand")).toHaveCount(0);
+    expect(await page.locator(":root").evaluate((root) => getComputedStyle(root).getPropertyValue("--space-0").trim())).toBe("#030405");
+    await expect(page.locator(".titlebar")).toHaveCSS("background-color", "rgb(3, 4, 5)");
     await page.getByRole("button", { name: "设置", exact: true }).last().click();
     const dialog = page.getByRole("dialog");
     await expect(dialog).toBeVisible();
     await expect(dialog.locator(".settings-nav button")).toHaveCount(6);
     const general = dialog.getByRole("button", { name: "通用", exact: true });
     await expect(general).toHaveAttribute("aria-current", "page");
-    await expect(general).toHaveCSS("background-color", "rgb(23, 34, 30)");
+    await expect(general).toHaveCSS("background-color", "rgb(24, 27, 31)");
+    await expect(general).toHaveCSS("color", "rgb(255, 255, 255)");
     await page.screenshot({ path: "test-results/settings-theme-desktop.png", fullPage: true });
 
     await page.setViewportSize({ width: 560, height: 720 });

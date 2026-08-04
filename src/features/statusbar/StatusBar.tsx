@@ -125,7 +125,7 @@ function GitComponent() {
         {status.changes.length > 0 && (
           <span style={{ color: "var(--amber-400)" }}>*{status.changes.length}</span>
         )}
-        {status.ahead > 0 && <span style={{ color: "var(--cyan-400)" }}>↑{status.ahead}</span>}
+        {status.ahead > 0 && <span style={{ color: "var(--text-hi)" }}>↑{status.ahead}</span>}
         {status.behind > 0 && <span style={{ color: "var(--amber-400)" }}>↓{status.behind}</span>}
       </span>
       {menuOpen && (
