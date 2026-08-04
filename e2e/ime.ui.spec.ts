@@ -345,10 +345,11 @@ test("directional pane focus ignores terminals in hidden sessions", async ({ pag
 test("switching tabs restores focus to that session's terminal", async ({ page }) => {
   await mockTerminalSession(page, true);
   await page.goto("/");
-  await expect(page.locator("[role=tab]")).toHaveCount(2);
+  const sessionTabs = page.locator(".tabbar [role=tab]");
+  await expect(sessionTabs).toHaveCount(2);
 
-  await page.locator("[role=tab]").nth(1).click();
-  await expect(page.locator("[role=tab]").nth(1)).toHaveAttribute("aria-selected", "true");
+  await sessionTabs.nth(1).click();
+  await expect(sessionTabs.nth(1)).toHaveAttribute("aria-selected", "true");
   await page.waitForTimeout(50);
 
   const focusedPane = await page.evaluate(() =>

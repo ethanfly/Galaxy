@@ -31,6 +31,7 @@ vi.mock("./features/settings/SettingsModal", () => ({ SettingsModal: () => null 
 vi.mock("./features/recovery/RecoveryDialog", () => ({ RecoveryDialog: () => null }));
 vi.mock("./features/workflow/WorkflowRunModal", () => ({ WorkflowRunModal: () => null }));
 vi.mock("./features/terminal/MovePaneModal", () => ({ MovePaneModal: () => null }));
+vi.mock("./features/insights/InsightsView", () => ({ InsightsView: () => null }));
 
 import App from "./App";
 import { useAppStore } from "./shared/stores/appStore";

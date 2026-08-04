@@ -15,6 +15,7 @@ import { SettingsModal } from "./features/settings/SettingsModal";
 import { RecoveryDialog } from "./features/recovery/RecoveryDialog";
 import { WorkflowRunModal } from "./features/workflow/WorkflowRunModal";
 import { MovePaneModal } from "./features/terminal/MovePaneModal";
+import { InsightsView } from "./features/insights/InsightsView";
 
 import { onAgentStatus, onOpenHere, onPtyExit, onPtyOutput, onRecoveryAvailable, onSessionTitle, onTriggerFire, onNotification, onGitChanged } from "./shared/ipc/events";
 import { useAppStore } from "./shared/stores/appStore";
@@ -110,7 +111,7 @@ export default function App() {
 
   if (loadState === "error") {
     return (
-      <div className="empty-workspace starfield">
+      <div className="empty-workspace">
         <div className="big-glyph">✧</div>
         <div>初始化失败：{error}</div>
       </div>
@@ -139,7 +140,9 @@ export default function App() {
           className={`insights-surface ${workspaceView === "insights" ? "active" : "inactive"}`}
           data-testid="insights-surface"
           aria-hidden={workspaceView !== "insights"}
-        />
+        >
+          <InsightsView />
+        </section>
       </main>
       <RightPanel />
       <StatusBar />

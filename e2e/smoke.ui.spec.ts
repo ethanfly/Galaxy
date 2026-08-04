@@ -79,16 +79,17 @@ async function mockTauri(page: Page) {
 }
 
 test.describe("app shell", () => {
-  test("renders titlebar, sidebar, empty workspace with starfield", async ({ page }) => {
+  test("renders the navigation rail, context sidebar, and terminal workspace", async ({ page }) => {
     await mockTauri(page);
     await page.goto("/");
     await expect(page.locator(".titlebar")).toBeVisible();
-    await expect(page.locator(".sidebar")).toBeVisible();
+    await expect(page.locator(".navigation-rail")).toBeVisible();
+    await expect(page.locator(".context-sidebar")).toBeVisible();
     await expect(page.locator(".empty-workspace")).toBeVisible();
     await expect(page.locator(".statusbar")).toBeVisible();
     await expect(page.locator(".tabbar")).toBeVisible();
     // starfield only in non-terminal areas (spec §6)
-    await expect(page.locator(".sidebar.starfield")).toBeAttached();
+    await expect(page.locator(".starfield")).toHaveCount(0);
   });
 
   test("Ctrl+P opens command palette and Esc closes it", async ({ page }) => {

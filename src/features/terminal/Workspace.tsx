@@ -29,7 +29,7 @@ export function Workspace() {
 
   if (sessions.length === 0 || !currentSessionId) {
     return (
-      <div className="empty-workspace starfield twinkle">
+      <div className="empty-workspace">
         <div className="big-glyph">✧</div>
         <div>{sessions.length === 0 ? "从左侧添加项目并新建终端" : "选择一个会话标签"}</div>
         {currentProjectId && (

@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-04T13:44:00+08:00",
+  "title": "Design System: Galaxy Terminal",
+  "extensions": {
+    "colorMeta": {
+      "instrument-black": { "role": "neutral", "displayName": "Instrument Black", "canonical": "#080a0b", "tonalRamp": ["#080a0b", "#151918", "#29302d", "#46514d", "#697671", "#919d98", "#bec6c2", "#edf3f0"] },
+      "signal-green": { "role": "primary", "displayName": "Signal Green", "canonical": "#67d9ad", "tonalRamp": ["#09241b", "#123b2d", "#1d5942", "#2c7a59", "#3fa077", "#67d9ad", "#a7f3d0", "#e6fff5"] }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Workspace Headline", "purpose": "Names the current operating surface." },
+      "data": { "displayName": "Instrument Data", "purpose": "Commands, counts, durations, timestamps, and ranked values." }
+    },
+    "shadows": [
+      { "name": "overlay", "value": "-18px 0 50px rgba(0,0,0,0.34)", "purpose": "Only for side panels when they overlay narrow workspaces." },
+      { "name": "tooltip", "value": "0 8px 26px rgba(0,0,0,0.38)", "purpose": "Separates transient data detail from the analytical canvas." }
+    ],
+    "motion": [
+      { "name": "state-only", "value": "prefers-reduced-motion aware", "purpose": "Motion is limited to state feedback such as the loading pulse." }
+    ],
+    "breakpoints": [
+      { "name": "overlay-inspector", "value": "1279px" },
+      { "name": "single-column", "value": "899px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Selected Segment",
+      "kind": "chip",
+      "refersTo": "segmented-selected",
+      "description": "Selected state for compact range and sorting controls.",
+      "html": "<button class=\"ds-segment\">全年</button>",
+      "css": ".ds-segment { height:26px; padding:0 10px; border:0; border-radius:3px; background:#21302a; color:#c9f9e6; font:11px 'Segoe UI',sans-serif; cursor:pointer; } .ds-segment:hover { color:#edf3f0; } .ds-segment:focus-visible { outline:1px solid #67d9ad; outline-offset:2px; }"
+    },
+    {
+      "name": "Instrument Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "Compact project and analysis filter field.",
+      "html": "<input class=\"ds-field\" value=\"Galaxy Terminal\" />",
+      "css": ".ds-field { height:30px; padding:0 9px; border:1px solid #3b4744; border-radius:3px; background:#0b0f10; color:#edf3f0; font:13px 'Segoe UI',sans-serif; } .ds-field:hover { border-color:#596862; } .ds-field:focus-visible { outline:1px solid #67d9ad; outline-offset:2px; }"
+    },
+    {
+      "name": "Navigation Item",
+      "kind": "nav",
+      "refersTo": "navigation-active",
+      "description": "Icon-led active destination in the primary rail.",
+      "html": "<button class=\"ds-nav\" aria-label=\"Insights\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\"><path d=\"M2.5 12.5h11M3.5 10V7.5M6.5 10V4.5M9.5 10V6M12.5 10V2.5\"/></svg></button>",
+      "css": ".ds-nav { width:38px; height:38px; display:grid; place-items:center; border:0; border-radius:4px; background:#17221e; color:#67d9ad; cursor:pointer; } .ds-nav:hover { background:#1d2b26; color:#a7f3d0; } .ds-nav:focus-visible { outline:1px solid #67d9ad; outline-offset:2px; }"
+    },
+    {
+      "name": "Activity Cell",
+      "kind": "custom",
+      "description": "The signature fixed-density daily activity mark.",
+      "html": "<button class=\"ds-activity\" aria-label=\"12 commands\"></button>",
+      "css": ".ds-activity { width:11px; height:11px; padding:0; border:0; border-radius:1px; background:#31936c; cursor:crosshair; } .ds-activity:hover { background:#65d8aa; } .ds-activity:focus-visible { outline:1px solid #a7f3d0; outline-offset:2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Precision Instrument Bench",
+    "overview": "Galaxy Terminal feels like a calibrated desktop instrument paired with a technical publication grid. It is dense without being cramped: hierarchy comes from alignment, fine rules, measured whitespace, and data typography rather than decoration or oversized containers.",
+    "keyCharacteristics": ["Charcoal materials with one cyan-green signal color.", "Continuous analytical canvases separated by fine rules.", "Compact controls, exact data columns, and flat navigation.", "Monospaced numbers and commands; humanist system type for interface copy."],
+    "rules": [
+      { "name": "The One Signal Rule", "body": "Cyan-green is the only routine accent. Amber and red communicate exceptional warning and failure states, never decoration.", "section": "colors" },
+      { "name": "The Natural Spacing Rule", "body": "Do not add tracking to headings, labels, tabs, or buttons. Structure must come from grid and weight.", "section": "typography" },
+      { "name": "The Flat Workbench Rule", "body": "Never add resting card shadows or floating dashboards inside the main canvas.", "section": "elevation" }
+    ],
+    "dos": ["Do use fine rules and alignment to define analytical regions.", "Do preserve fixed density for heatmaps and scroll them on narrow screens.", "Do keep terminal instances mounted when switching workspace modes."],
+    "donts": ["Don't restore stars, purple glow, gradients, or decorative pixel motion.", "Don't nest cards inside cards or turn every statistic into a rounded container.", "Don't use filled progress tracks for scores or rankings; prefer exact values and thin measures."]
+  }
+}
