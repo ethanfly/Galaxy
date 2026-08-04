@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { act, cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const windowMocks = vi.hoisted(() => ({
@@ -16,6 +16,8 @@ vi.mock("@tauri-apps/api/window", () => ({
 }));
 
 import { TitleBar } from "./TitleBar";
+import { t } from "../../shared/i18n";
+import { useUiStore } from "../../shared/stores/uiStore";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -29,6 +31,8 @@ describe("TitleBar resize listener lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     windowMocks.isMaximized.mockResolvedValue(false);
+    windowMocks.onResized.mockResolvedValue(() => {});
+    useUiStore.setState({ workspaceView: "terminal", contextSidebarOpen: true });
   });
 
   afterEach(cleanup);
@@ -82,5 +86,22 @@ describe("TitleBar resize listener lifecycle", () => {
     expect(consoleError).toHaveBeenCalledWith("Failed to query maximized window state", queryError);
     expect(consoleError).toHaveBeenCalledWith("Failed to register window resize listener", listenError);
     consoleError.mockRestore();
+  });
+
+  it("opens the terminal context sidebar when invoked from insights", async () => {
+    useUiStore.setState({ workspaceView: "insights", contextSidebarOpen: false });
+    render(<TitleBar />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const sidebarButton = screen.getByRole("button", { name: t("toggleSidebar") });
+    expect(sidebarButton.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(sidebarButton);
+
+    expect(useUiStore.getState().workspaceView).toBe("terminal");
+    expect(useUiStore.getState().contextSidebarOpen).toBe(true);
+    expect(sidebarButton.getAttribute("aria-pressed")).toBe("true");
   });
 });

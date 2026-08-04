@@ -7,6 +7,7 @@ use tauri::State;
 use crate::core::config::LayoutTemplate;
 use crate::core::models::{
     new_id, now_rfc3339, LayoutNode, Pane, Project, Session, ShellProfile, SplitDirection, Store,
+    DEFAULT_PROJECT_COLOR,
 };
 use crate::error::{AppError, CmdError, CmdResult, IntoCmd};
 use crate::pty::PtySpec;
@@ -171,7 +172,7 @@ pub async fn project_add(
                 .to_string()
         }),
         path: normalized.clone(),
-        color: color.unwrap_or_else(|| "#694dc9".into()),
+        color: color.unwrap_or_else(|| DEFAULT_PROJECT_COLOR.into()),
         default_profile_id: None,
         created_at: now_rfc3339(),
         last_accessed_at: now_rfc3339(),
@@ -870,6 +871,11 @@ pub async fn recovery_clean_start(state: State<'_, Arc<AppState>>) -> CmdResult<
 mod tests {
     use super::*;
     use crate::core::models::ProfileSource;
+
+    #[test]
+    fn default_project_color_matches_the_signal_green_theme() {
+        assert_eq!(DEFAULT_PROJECT_COLOR, "#39b98a");
+    }
 
     fn pane(id: &str) -> Pane {
         let profile = ShellProfile {

@@ -18,9 +18,18 @@ describe("uiStore workspace navigation", () => {
     expect(useUiStore.getState().workspaceView).toBe("terminal");
   });
 
-  it("toggles the contextual sidebar independently", () => {
-    useUiStore.getState().toggleContextSidebar();
+  it("toggles the contextual sidebar from the terminal workspace", () => {
+    useUiStore.getState().toggleWorkspaceContext();
     expect(useUiStore.getState().contextSidebarOpen).toBe(false);
     expect(useUiStore.getState().workspaceView).toBe("terminal");
+  });
+
+  it("reveals the terminal context when toggled from insights", () => {
+    useUiStore.setState({ workspaceView: "insights", contextSidebarOpen: false });
+
+    useUiStore.getState().toggleWorkspaceContext();
+
+    expect(useUiStore.getState().workspaceView).toBe("terminal");
+    expect(useUiStore.getState().contextSidebarOpen).toBe(true);
   });
 });

@@ -3,7 +3,7 @@
 //   node scripts/bump-version.mjs              # print current
 //   node scripts/bump-version.mjs 1.2.3        # set exact
 //   node scripts/bump-version.mjs patch|minor|major
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -36,6 +36,7 @@ function bump(cur, kind) {
 
 const pkgPath = join(root, "package.json");
 const cargoPath = join(root, "src-tauri", "Cargo.toml");
+const cargoLockPath = join(root, "src-tauri", "Cargo.lock");
 const tauriPath = join(root, "src-tauri", "tauri.conf.json");
 
 const pkg = readJson(pkgPath);
@@ -68,7 +69,10 @@ let seenPackage = false;
 cargo = cargo
   .split("\n")
   .map((line) => {
-    if (line.trim() === "[package]") seenPackage = true;
+    if (line.trim() === "[package]") {
+      seenPackage = true;
+      return line;
+    }
     if (seenPackage && /^version\s*=\s*".*"/.test(line)) {
       seenPackage = false;
       return `version = "${next}"`;
@@ -79,7 +83,36 @@ cargo = cargo
   .join("\n");
 writeFileSync(cargoPath, cargo, "utf8");
 
+// Cargo.lock records the root package version and CI uses --locked.
+if (existsSync(cargoLockPath)) {
+  let inPackage = false;
+  let targetPackage = false;
+  let cargoLock = readFileSync(cargoLockPath, "utf8");
+  cargoLock = cargoLock
+    .split("\n")
+    .map((line) => {
+      if (line.trim() === "[[package]]") {
+        inPackage = true;
+        targetPackage = false;
+        return line;
+      }
+      if (inPackage && line.trim() === `name = "${pkg.name}"`) {
+        targetPackage = true;
+        return line;
+      }
+      if (targetPackage && /^version\s*=\s*".*"/.test(line)) {
+        inPackage = false;
+        targetPackage = false;
+        return `version = "${next}"`;
+      }
+      return line;
+    })
+    .join("\n");
+  writeFileSync(cargoLockPath, cargoLock, "utf8");
+}
+
 console.log(`version -> ${next}`);
 console.log(`  package.json`);
 console.log(`  src-tauri/tauri.conf.json`);
 console.log(`  src-tauri/Cargo.toml`);
+if (existsSync(cargoLockPath)) console.log(`  src-tauri/Cargo.lock`);

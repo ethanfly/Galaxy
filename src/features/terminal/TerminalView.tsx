@@ -21,30 +21,7 @@ import { registerTerminal, unregisterTerminal, useTerminalStore } from "../../sh
 import { useAppStore } from "../../shared/stores/appStore";
 import { t } from "../../shared/i18n";
 import { layoutPanes } from "../../shared/utils";
-
-const GALAXY_THEME = {
-  background: "#070916",
-  foreground: "#d8ddf4",
-  cursor: "#9a7bf5",
-  cursorAccent: "#070916",
-  selectionBackground: "#2b3566",
-  black: "#0c0f22",
-  red: "#ef5470",
-  green: "#48ded1",
-  yellow: "#f5b754",
-  blue: "#7da6ff",
-  magenta: "#9a7bf5",
-  cyan: "#59e6d9",
-  white: "#b8bde0",
-  brightBlack: "#35407a",
-  brightRed: "#ff7d93",
-  brightGreen: "#6ff2e4",
-  brightYellow: "#ffd07f",
-  brightBlue: "#9fbdff",
-  brightMagenta: "#b9a7ff",
-  brightCyan: "#84efe5",
-  brightWhite: "#eef1ff",
-};
+import { GALAXY_THEME } from "./terminalTheme";
 
 /**
  * Font stack for Latin mono + CJK fallback.
@@ -373,7 +350,14 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
 
   void scrollLocked;
 
-  return <div ref={hostRef} className="terminal-host" data-pane-id={pane.id} />;
+  return (
+    <div
+      ref={hostRef}
+      className="terminal-host"
+      data-pane-id={pane.id}
+      style={{ backgroundColor: GALAXY_THEME.background }}
+    />
+  );
 }
 
 /** Prefer canvas renderer when the UI language or OS is CJK-oriented. */

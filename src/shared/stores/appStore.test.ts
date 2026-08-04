@@ -7,7 +7,7 @@ vi.mock("../ipc/client", () => ({
       id: "p1",
       name: "proj",
       path: "C:\\proj",
-      color: "#694dc9",
+      color: "#39b98a",
       createdAt: "2026-01-01T00:00:00Z",
       lastAccessedAt: "2026-01-01T00:00:00Z",
     },

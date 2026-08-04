@@ -125,7 +125,7 @@ function usePaletteItems(): PaletteItem[] {
     action("panel-notifications", `${t("notifications")} 面板`, "Ctrl+Shift+N", "notifications", () => ui().openPanel("notifications"));
     action("toggle-panel", t("toggleRightPanel"), "", "toggle right panel", () => ui().togglePanel());
     action("settings", t("settings"), "Ctrl+,", "settings preferences", () => ui().openSettings("general"));
-    action("toggle-sidebar", t("toggleSidebar"), "", "sidebar toggle", () => ui().toggleSidebar());
+    action("toggle-sidebar", t("toggleSidebar"), "", "sidebar toggle", () => ui().toggleWorkspaceContext());
     action("sync-input", `${t("syncInput")} 切换`, "", "sync input broadcast", async () => {
       const s = app().sessions.find((x) => x.id === app().currentSessionId);
       if (s) await app().setSessionSync(s.id, !s.syncInput);

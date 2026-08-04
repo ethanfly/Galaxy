@@ -17,7 +17,6 @@ vi.mock("./shared/ipc/events", () => eventMocks);
 vi.mock("./features/shortcuts/useShortcuts", () => ({ useShortcuts: () => {} }));
 vi.mock("./features/titlebar/TitleBar", () => ({ TitleBar: () => null }));
 vi.mock("./features/tabs/TabBar", () => ({ TabBar: () => null }));
-vi.mock("./features/projects/ProjectSidebar", () => ({ ProjectSidebar: () => null }));
 vi.mock("./features/terminal/Workspace", () => ({
   Workspace: () => <div data-testid="workspace-instance" />,
 }));

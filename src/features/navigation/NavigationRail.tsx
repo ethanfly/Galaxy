@@ -1,11 +1,4 @@
-import {
-  IconFolder,
-  IconHistory,
-  IconLogo,
-  IconSessions,
-  IconSettings,
-  IconTerminal,
-} from "../../shared/icons/Icons";
+import { IconHistory, IconLogo, IconSettings, IconTerminal } from "../../shared/icons/Icons";
 import { t } from "../../shared/i18n";
 import { useUiStore } from "../../shared/stores/uiStore";
 
@@ -14,28 +7,19 @@ type RailAction = {
   label: string;
   icon: typeof IconTerminal;
   active: boolean;
+  dialog?: boolean;
   onClick: () => void;
 };
 
 export function NavigationRail() {
   const workspaceView = useUiStore((state) => state.workspaceView);
-  const contextSidebarOpen = useUiStore((state) => state.contextSidebarOpen);
   const setWorkspaceView = useUiStore((state) => state.setWorkspaceView);
-  const toggleContextSidebar = useUiStore((state) => state.toggleContextSidebar);
-  const openBlockSearch = useUiStore((state) => state.openBlockSearch);
+  const historySearchOpen = useUiStore((state) => state.historySearchOpen);
+  const settingsOpen = useUiStore((state) => state.settingsOpen);
+  const openHistorySearch = useUiStore((state) => state.openHistorySearch);
   const openSettings = useUiStore((state) => state.openSettings);
 
   const actions: RailAction[] = [
-    {
-      id: "projects",
-      label: t("projects"),
-      icon: IconFolder,
-      active: contextSidebarOpen && workspaceView === "terminal",
-      onClick: () => {
-        setWorkspaceView("terminal");
-        if (!contextSidebarOpen) toggleContextSidebar();
-      },
-    },
     {
       id: "terminal",
       label: t("terminal"),
@@ -51,21 +35,15 @@ export function NavigationRail() {
       onClick: () => setWorkspaceView("insights"),
     },
     {
-      id: "sessions",
-      label: t("sessions"),
-      icon: IconSessions,
-      active: false,
+      id: "history",
+      label: t("history"),
+      icon: IconHistory,
+      active: historySearchOpen,
+      dialog: true,
       onClick: () => {
         setWorkspaceView("terminal");
-        if (!contextSidebarOpen) toggleContextSidebar();
+        openHistorySearch();
       },
-    },
-    {
-      id: "favorites",
-      label: t("favorites"),
-      icon: IconHistory,
-      active: false,
-      onClick: openBlockSearch,
     },
   ];
 
@@ -75,14 +53,16 @@ export function NavigationRail() {
         <IconLogo size={22} />
       </div>
       <div className="rail-actions">
-        {actions.map(({ id, label, icon: Icon, active, onClick }) => (
+        {actions.map(({ id, label, icon: Icon, active, dialog, onClick }) => (
           <button
             key={id}
             type="button"
             className={`rail-button ${active ? "active" : ""}`}
             title={label}
             aria-label={label}
-            aria-pressed={active}
+            aria-pressed={dialog ? undefined : active}
+            aria-haspopup={dialog ? "dialog" : undefined}
+            aria-expanded={dialog ? active : undefined}
             onClick={onClick}
           >
             <Icon size={16} />
@@ -91,9 +71,11 @@ export function NavigationRail() {
       </div>
       <button
         type="button"
-        className="rail-button rail-settings"
+        className={`rail-button rail-settings ${settingsOpen ? "active" : ""}`}
         title={t("settings")}
         aria-label={t("settings")}
+        aria-haspopup="dialog"
+        aria-expanded={settingsOpen}
         onClick={() => openSettings("general")}
       >
         <IconSettings size={16} />

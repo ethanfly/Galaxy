@@ -16,7 +16,6 @@ interface UiState {
   contextSidebarOpen: boolean;
   rightPanelOpen: boolean;
   rightPanelTab: RightPanelTab;
-  sidebarOpen: boolean;
   findBarOpen: boolean;
   blockSearchOpen: boolean;
   historySearchOpen: boolean;
@@ -29,11 +28,10 @@ interface UiState {
   aboutOpen: boolean;
 
   setWorkspaceView(view: WorkspaceView): void;
-  toggleContextSidebar(): void;
+  toggleWorkspaceContext(): void;
   openPanel(tab: RightPanelTab): void;
   togglePanel(tab?: RightPanelTab): void;
   closePanel(): void;
-  toggleSidebar(): void;
   openFind(): void;
   closeFind(): void;
   openBlockSearch(): void;
@@ -55,7 +53,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   contextSidebarOpen: true,
   rightPanelOpen: false,
   rightPanelTab: "agent",
-  sidebarOpen: true,
   findBarOpen: false,
   blockSearchOpen: false,
   historySearchOpen: false,
@@ -70,7 +67,11 @@ export const useUiStore = create<UiState>((set, get) => ({
   setWorkspaceView(view) {
     set({ workspaceView: view });
   },
-  toggleContextSidebar() {
+  toggleWorkspaceContext() {
+    if (get().workspaceView !== "terminal") {
+      set({ workspaceView: "terminal", contextSidebarOpen: true });
+      return;
+    }
     set({ contextSidebarOpen: !get().contextSidebarOpen });
   },
   openPanel(tab) {
@@ -89,9 +90,6 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
   closePanel() {
     set({ rightPanelOpen: false });
-  },
-  toggleSidebar() {
-    set({ sidebarOpen: !get().sidebarOpen });
   },
   openFind() {
     set({ findBarOpen: true, blockSearchOpen: false, historySearchOpen: false, paletteOpen: false });

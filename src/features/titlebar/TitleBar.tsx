@@ -37,11 +37,11 @@ export function TitleBar() {
     s.projects.find((p) => p.id === s.currentProjectId),
   );
   const unread = useAppStore((s) => s.unreadCount);
-  const sidebarOpen = useUiStore((s) => s.sidebarOpen);
+  const contextSidebarOpen = useUiStore((s) => s.contextSidebarOpen);
   const workspaceView = useUiStore((s) => s.workspaceView);
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
   const rightPanelTab = useUiStore((s) => s.rightPanelTab);
-  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
+  const toggleWorkspaceContext = useUiStore((s) => s.toggleWorkspaceContext);
   const setWorkspaceView = useUiStore((s) => s.setWorkspaceView);
   const togglePanel = useUiStore((s) => s.togglePanel);
   const openSettings = useUiStore((s) => s.openSettings);
@@ -138,11 +138,11 @@ export function TitleBar() {
       <div className="titlebar-tools" role="toolbar" aria-label={t("rightPanel")}>
         <button
           type="button"
-          className={`icon-btn titlebar-tool ${sidebarOpen ? "active" : ""}`}
+          className={`icon-btn titlebar-tool ${workspaceView === "terminal" && contextSidebarOpen ? "active" : ""}`}
           title={t("toggleSidebar")}
           aria-label={t("toggleSidebar")}
-          aria-pressed={sidebarOpen}
-          onClick={() => toggleSidebar()}
+          aria-pressed={workspaceView === "terminal" && contextSidebarOpen}
+          onClick={toggleWorkspaceContext}
         >
           <IconSidebar />
         </button>

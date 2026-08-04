@@ -6,7 +6,7 @@ async function mockTerminalSession(page: Page, includeHiddenSession = false) {
       id: "project-ime",
       name: "IME",
       path: "C:\\workspace\\ime",
-      color: "#694dc9",
+      color: "#39b98a",
       createdAt: "2026-08-03T00:00:00Z",
       lastAccessedAt: "2026-08-03T00:00:00Z",
     };
@@ -464,4 +464,21 @@ test("terminal metadata updates do not steal focus from an overlay", async ({ pa
     ),
   ).toBe(0);
   await expect(search).toBeFocused();
+});
+
+test("terminal canvas uses the charcoal workspace surface", async ({ page }) => {
+  await mockTerminalSession(page);
+  await page.goto("/");
+  const terminal = page.locator(".terminal-host").first();
+  await expect(terminal.locator(".xterm-screen")).toBeVisible();
+  await expect(terminal).toHaveCSS("background-color", "rgb(11, 14, 15)");
+
+  await page.evaluate(() => {
+    (window as unknown as { __emitTauri: (event: string, payload: unknown) => void }).__emitTauri(
+      "pty://output",
+      { chunks: [{ paneId: "pane-ime", seq: 1, data: "PS C:\\workspace\\ime> npm test\r\n33 tests passed\r\nPS C:\\workspace\\ime> " }] },
+    );
+  });
+  await page.waitForTimeout(100);
+  await page.screenshot({ path: "test-results/terminal-theme.png", fullPage: true });
 });

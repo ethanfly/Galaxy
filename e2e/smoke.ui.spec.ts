@@ -112,4 +112,24 @@ test.describe("app shell", () => {
     // No session → find bar hidden gracefully without crash.
     await expect(page.locator(".empty-workspace")).toBeVisible();
   });
+
+  test("uses compact navigation and responsive signal-green settings chapters", async ({ page }) => {
+    await mockTauri(page);
+    await page.goto("/");
+
+    await expect(page.locator(".navigation-rail button")).toHaveCount(4);
+    await page.getByRole("button", { name: "设置", exact: true }).last().click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator(".settings-nav button")).toHaveCount(6);
+    const general = dialog.getByRole("button", { name: "通用", exact: true });
+    await expect(general).toHaveAttribute("aria-current", "page");
+    await expect(general).toHaveCSS("background-color", "rgb(23, 34, 30)");
+    await page.screenshot({ path: "test-results/settings-theme-desktop.png", fullPage: true });
+
+    await page.setViewportSize({ width: 560, height: 720 });
+    await expect(dialog.locator(".settings-shell")).toHaveCSS("flex-direction", "column");
+    await expect(dialog.locator(".settings-nav")).toHaveCSS("flex-direction", "row");
+    await page.screenshot({ path: "test-results/settings-theme-narrow.png", fullPage: true });
+  });
 });

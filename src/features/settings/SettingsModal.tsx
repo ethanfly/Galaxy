@@ -22,13 +22,13 @@ import { useTerminalStore } from "../../shared/stores/terminalStore";
 import { layoutPanes, localId } from "../../shared/utils";
 import { ShortcutsSection } from "./ShortcutsSection";
 
-const SECTIONS: Array<{ id: SettingsSection; label: string }> = [
-  { id: "general", label: "通用 General" },
-  { id: "workflows", label: "Workflows" },
-  { id: "templates", label: "布局模板" },
-  { id: "triggers", label: "触发器" },
-  { id: "shortcuts", label: "快捷键" },
-  { id: "diagnostics", label: "诊断" },
+export const SETTINGS_SECTIONS: Array<{ id: SettingsSection; labelKey: string }> = [
+  { id: "general", labelKey: "general" },
+  { id: "workflows", labelKey: "workflows" },
+  { id: "templates", labelKey: "layoutTemplates" },
+  { id: "triggers", labelKey: "triggers" },
+  { id: "shortcuts", labelKey: "shortcuts" },
+  { id: "diagnostics", labelKey: "diagnostics" },
 ];
 
 export function SettingsModal() {
@@ -63,13 +63,15 @@ export function SettingsModal() {
     <Modal title={t("settings")} onClose={close} className="settings-modal" width="78vw">
       <div className="settings-shell">
         <div className="settings-nav">
-          {SECTIONS.map((s) => (
+          {SETTINGS_SECTIONS.map((s) => (
             <button
               key={s.id}
+              type="button"
               className={section === s.id ? "active" : ""}
+              aria-current={section === s.id ? "page" : undefined}
               onClick={() => setSection(s.id)}
             >
-              {s.label}
+              {t(s.labelKey)}
             </button>
           ))}
         </div>

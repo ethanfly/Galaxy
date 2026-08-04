@@ -61,7 +61,7 @@ export function IconLogo(p: IconProps) {
       focusable="false"
     >
       {p.title ? <title>{p.title}</title> : null}
-      <circle cx="16" cy="16" r="15" fill="#05070f" />
+      <circle cx="16" cy="16" r="15" fill="#080a0b" />
       {/* accretion disk */}
       <path
         fill="currentColor"
@@ -73,7 +73,7 @@ export function IconLogo(p: IconProps) {
         d="M16 8c4.42 0 8 3.58 8 8 0 2.2-.9 4.2-2.35 5.65.75-1.05 1.2-2.35 1.2-3.75 0-3.45-2.8-6.25-6.25-6.25S10.35 14.45 10.35 17.9 13.15 24.15 16.6 24.15c.95 0 1.85-.2 2.65-.55-.95.75-2.15 1.2-3.45 1.2-3.7 0-6.7-3-6.7-6.7s3-6.7 6.7-6.7c1.15 0 2.25.3 3.2.8-.95-.2-1.95-.3-3-.15z"
       />
       {/* event horizon */}
-      <circle cx="16" cy="16" r="4.2" fill="#05070f" />
+      <circle cx="16" cy="16" r="4.2" fill="#080a0b" />
       {/* spiral arm / G tail */}
       <path
         fill="currentColor"
