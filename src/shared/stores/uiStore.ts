@@ -2,6 +2,7 @@
 import { create } from "zustand";
 
 export type RightPanelTab = "agent" | "git" | "history" | "notifications";
+export type WorkspaceView = "terminal" | "insights";
 export type SettingsSection =
   | "general"
   | "workflows"
@@ -11,6 +12,8 @@ export type SettingsSection =
   | "diagnostics";
 
 interface UiState {
+  workspaceView: WorkspaceView;
+  contextSidebarOpen: boolean;
   rightPanelOpen: boolean;
   rightPanelTab: RightPanelTab;
   sidebarOpen: boolean;
@@ -25,6 +28,8 @@ interface UiState {
   movePaneId: string | null;
   aboutOpen: boolean;
 
+  setWorkspaceView(view: WorkspaceView): void;
+  toggleContextSidebar(): void;
   openPanel(tab: RightPanelTab): void;
   togglePanel(tab?: RightPanelTab): void;
   closePanel(): void;
@@ -46,6 +51,8 @@ interface UiState {
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
+  workspaceView: "terminal",
+  contextSidebarOpen: true,
   rightPanelOpen: false,
   rightPanelTab: "agent",
   sidebarOpen: true,
@@ -60,6 +67,12 @@ export const useUiStore = create<UiState>((set, get) => ({
   movePaneId: null,
   aboutOpen: false,
 
+  setWorkspaceView(view) {
+    set({ workspaceView: view });
+  },
+  toggleContextSidebar() {
+    set({ contextSidebarOpen: !get().contextSidebarOpen });
+  },
   openPanel(tab) {
     set({ rightPanelOpen: true, rightPanelTab: tab });
   },

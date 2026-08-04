@@ -101,7 +101,75 @@ export interface CommandBlock {
   startedAt: string;
   endedAt?: string | null;
   exitCode?: number | null;
+  agentKind?: AgentKind | null;
   favorite: boolean;
+}
+
+export type InsightsRange = "sevenDays" | "thirtyDays" | "ninetyDays" | "year";
+
+export interface InsightsMetrics {
+  commandCount: number;
+  activeDays: number;
+  completedCount: number;
+  successCount: number;
+  successRate: number | null;
+  activeDurationMs: number;
+}
+
+export interface DailyActivity {
+  date: string;
+  commandCount: number;
+  successCount: number;
+  failureCount: number;
+  agentCommandCount: number;
+  activeDurationMs: number;
+  level: number;
+}
+
+export interface ProjectInsight {
+  projectId: string;
+  projectName: string;
+  commandCount: number;
+  completedCount: number;
+  failureCount: number;
+  failureRate: number | null;
+  activeDurationMs: number;
+  lastActivityAt: string;
+}
+
+export interface AgentInsight {
+  agentKind: AgentKind | null;
+  commandCount: number;
+  sessionCount: number;
+  lastActivityAt: string;
+}
+
+export interface RecentActivity {
+  id: string;
+  projectId: string;
+  projectName: string;
+  sessionId: string;
+  paneId: string;
+  command: string;
+  startedAt: string;
+  endedAt: string | null;
+  exitCode: number | null;
+  agentKind: AgentKind | null;
+  favorite: boolean;
+  durationMs: number | null;
+}
+
+export interface InsightsSummary {
+  range: InsightsRange;
+  rangeStart: string;
+  rangeEnd: string;
+  generatedAt: string;
+  summary: InsightsMetrics;
+  daily: DailyActivity[];
+  projects: ProjectInsight[];
+  agents: AgentInsight[];
+  recent: RecentActivity[];
+  invalidRecordCount: number;
 }
 
 export interface AgentConversation {

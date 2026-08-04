@@ -12,6 +12,8 @@ import type {
   DiagnosticsInfo,
   GitBranch,
   GitStatus,
+  InsightsRange,
+  InsightsSummary,
   LayoutTemplate,
   NotificationItem,
   PaneChunk,
@@ -103,6 +105,11 @@ export const blockSetFavorite = (id: string, favorite: boolean) =>
 export const blockRerun = (id: string, paneId: string) =>
   call<void>("block_rerun", { id, paneId });
 export const blocksClearNonFavorites = () => call<number>("blocks_clear_non_favorites");
+export const insightsSummary = (
+  projectId: string | null,
+  range: InsightsRange,
+  timezoneOffsetMinutes: number,
+) => call<InsightsSummary>("insights_summary", { projectId, range, timezoneOffsetMinutes });
 
 // ------------------------------------------------------------------ agents
 export const agentScan = (projectPath: string) =>
