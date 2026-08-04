@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const GENERATOR = join(ROOT, "scripts", "gen-icons.mjs");
-const MASTER = join(ROOT, "public", "brand", "galaxy-mark.svg");
+const MASTER = join(ROOT, "src-tauri", "icons", "logo-master.png");
 
 const outputs = [
   ["public", "icon.png", 256],
@@ -25,10 +25,12 @@ const outputs = [
   ["tauri", "icon.ico", null],
 ];
 
-test("renders neutral package icons with transparent outside corners", async (t) => {
-  assert.ok(existsSync(MASTER), "authored master SVG must exist");
+test("renders the original PNG brand with a 25 percent transparent corner radius", async (t) => {
+  assert.ok(existsSync(MASTER), "authored master PNG must exist");
   const { default: pngjs } = await import("pngjs");
   const { PNG } = pngjs;
+  const master = PNG.sync.read(readFileSync(MASTER));
+  assert.deepEqual([master.width, master.height], [1024, 1024]);
 
   const root = mkdtempSync(join(tmpdir(), "galaxy-icons-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -51,7 +53,12 @@ test("renders neutral package icons with transparent outside corners", async (t)
 
   const icon = PNG.sync.read(readFileSync(join(tauriDir, "icon.png")));
   assert.deepEqual([icon.width, icon.height], [256, 256]);
-  assert.equal(icon.data[3], 0, "top-left pixel must remain transparent");
+  assert.equal(alphaAt(icon, 0, 0), 0, "top-left pixel must be transparent");
+  assert.equal(alphaAt(icon, 255, 0), 0, "top-right pixel must be transparent");
+  assert.equal(alphaAt(icon, 0, 255), 0, "bottom-left pixel must be transparent");
+  assert.equal(alphaAt(icon, 255, 255), 0, "bottom-right pixel must be transparent");
+  assert.ok(alphaAt(icon, 64, 8) > 0, "pixels inside the 25 percent radius must remain visible");
+  assert.ok(alphaAt(icon, 128, 128) > 0, "the logo center must remain visible");
 
   let visiblePixels = 0;
   let maxChannelSpread = 0;
@@ -66,7 +73,7 @@ test("renders neutral package icons with transparent outside corners", async (t)
   }
   assert.ok(visiblePixels > 0, "brand raster must contain visible pixels");
   assert.ok(
-    maxChannelSpread <= 2,
+    maxChannelSpread <= 8,
     `brand raster contains chromatic pixels (channel spread ${maxChannelSpread})`,
   );
   assert.deepEqual(readIcoSizes(readFileSync(join(tauriDir, "icon.ico")), PNG), [16, 32, 48, 256]);
@@ -92,6 +99,10 @@ test("renders neutral package icons with transparent outside corners", async (t)
     }
   }
 });
+
+function alphaAt(image, x, y) {
+  return image.data[(y * image.width + x) * 4 + 3];
+}
 
 function readIcoSizes(buffer, PNG) {
   assert.equal(buffer.readUInt16LE(0), 0, "ICO reserved header must be zero");

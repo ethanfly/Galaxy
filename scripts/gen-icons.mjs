@@ -5,10 +5,12 @@ import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 
-import { Resvg } from "@resvg/resvg-js";
+import pngjs from "pngjs";
+
+const { PNG } = pngjs;
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const DEFAULT_MASTER = join(ROOT, "public", "brand", "galaxy-mark.svg");
+const DEFAULT_MASTER = join(ROOT, "src-tauri", "icons", "logo-master.png");
 const DEFAULT_PUBLIC = join(ROOT, "public");
 const DEFAULT_TAURI = join(ROOT, "src-tauri", "icons");
 
@@ -17,18 +19,15 @@ export function generateIconAssets({
   publicDir = DEFAULT_PUBLIC,
   tauriDir = DEFAULT_TAURI,
 } = {}) {
-  const svg = readFileSync(masterPath);
-  validateMaster(svg.toString("utf8"));
+  const master = PNG.sync.read(readFileSync(masterPath));
+  validateMaster(master);
   mkdirSync(publicDir, { recursive: true });
   mkdirSync(tauriDir, { recursive: true });
 
   const pngBySize = new Map();
   const render = (size) => {
     if (!pngBySize.has(size)) {
-      const image = new Resvg(svg, {
-        fitTo: { mode: "width", value: size },
-      }).render();
-      pngBySize.set(size, Buffer.from(image.asPng()));
+      pngBySize.set(size, renderPng(master, size));
     }
     return pngBySize.get(size);
   };
@@ -47,12 +46,65 @@ export function generateIconAssets({
   return { publicDir, tauriDir };
 }
 
-function validateMaster(svg) {
-  if (!/viewBox=["']0 0 64 64["']/.test(svg)) {
-    throw new Error("Galaxy master SVG must use viewBox 0 0 64 64");
+function validateMaster(master) {
+  if (master.width !== 1024 || master.height !== 1024) {
+    throw new Error("Galaxy master PNG must be 1024x1024");
   }
-  if (/<(?:linearGradient|radialGradient|filter|image)\b/i.test(svg)) {
-    throw new Error("Galaxy master SVG must remain flat vector geometry");
+}
+
+function renderPng(source, size) {
+  const image = resizeBilinear(source, size);
+  applyRoundedMask(image);
+  return PNG.sync.write(image);
+}
+
+function resizeBilinear(source, size) {
+  const output = new PNG({ width: size, height: size });
+  const scaleX = source.width / size;
+  const scaleY = source.height / size;
+
+  for (let y = 0; y < size; y += 1) {
+    const sourceY = Math.max(0, Math.min(source.height - 1, (y + 0.5) * scaleY - 0.5));
+    const y0 = Math.floor(sourceY);
+    const y1 = Math.min(source.height - 1, y0 + 1);
+    const weightY = sourceY - y0;
+
+    for (let x = 0; x < size; x += 1) {
+      const sourceX = Math.max(0, Math.min(source.width - 1, (x + 0.5) * scaleX - 0.5));
+      const x0 = Math.floor(sourceX);
+      const x1 = Math.min(source.width - 1, x0 + 1);
+      const weightX = sourceX - x0;
+      const outputOffset = (y * size + x) * 4;
+
+      for (let channel = 0; channel < 4; channel += 1) {
+        const topLeft = source.data[(y0 * source.width + x0) * 4 + channel];
+        const topRight = source.data[(y0 * source.width + x1) * 4 + channel];
+        const bottomLeft = source.data[(y1 * source.width + x0) * 4 + channel];
+        const bottomRight = source.data[(y1 * source.width + x1) * 4 + channel];
+        const top = topLeft + (topRight - topLeft) * weightX;
+        const bottom = bottomLeft + (bottomRight - bottomLeft) * weightX;
+        output.data[outputOffset + channel] = Math.round(top + (bottom - top) * weightY);
+      }
+    }
+  }
+
+  return output;
+}
+
+function applyRoundedMask(image, radiusRatio = 0.25) {
+  const radius = image.width * radiusRatio;
+  const farCenter = image.width - radius;
+
+  for (let y = 0; y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      const pixelX = x + 0.5;
+      const pixelY = y + 0.5;
+      const centerX = pixelX < radius ? radius : pixelX > farCenter ? farCenter : pixelX;
+      const centerY = pixelY < radius ? radius : pixelY > farCenter ? farCenter : pixelY;
+      if (Math.hypot(pixelX - centerX, pixelY - centerY) > radius) {
+        image.data[(y * image.width + x) * 4 + 3] = 0;
+      }
+    }
   }
 }
 
