@@ -1,71 +1,86 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-04T13:44:00+08:00",
+  "generatedAt": "2026-08-04T17:20:00+08:00",
   "title": "Design System: Galaxy Terminal",
   "extensions": {
     "colorMeta": {
-      "instrument-black": { "role": "neutral", "displayName": "Instrument Black", "canonical": "#080a0b", "tonalRamp": ["#080a0b", "#151918", "#29302d", "#46514d", "#697671", "#919d98", "#bec6c2", "#edf3f0"] },
-      "signal-green": { "role": "primary", "displayName": "Signal Green", "canonical": "#67d9ad", "tonalRamp": ["#09241b", "#123b2d", "#1d5942", "#2c7a59", "#3fa077", "#67d9ad", "#a7f3d0", "#e6fff5"] }
+      "abyss-black": { "role": "neutral", "displayName": "Abyss Black", "canonical": "#030405", "tonalRamp": ["#030405", "#0a0c0e", "#181b1f", "#24282c", "#3d4349", "#8b9196", "#c6c9cc", "#f7f8f8"] },
+      "brilliant-white": { "role": "primary", "displayName": "Brilliant White", "canonical": "#ffffff", "tonalRamp": ["#181b1f", "#24282c", "#3d4349", "#5b6167", "#8b9196", "#c6c9cc", "#f5f6f7", "#ffffff"] },
+      "success-green": { "role": "semantic", "displayName": "Success Green", "canonical": "#5bd6a2", "tonalRamp": ["#09241b", "#123b2d", "#1d5942", "#2c7a59", "#3fa077", "#5bd6a2", "#83e5ba", "#e6fff5"] },
+      "warning-amber": { "role": "semantic", "displayName": "Warning Amber", "canonical": "#f2bd65", "tonalRamp": ["#2a1d08", "#493313", "#6c4d20", "#936b31", "#bd8d45", "#f2bd65", "#ffd07f", "#fff3d7"] },
+      "error-red": { "role": "semantic", "displayName": "Error Red", "canonical": "#ff667f", "tonalRamp": ["#2c0b12", "#4a151f", "#702331", "#983447", "#c44960", "#ff667f", "#ffb4c2", "#fff0f3"] }
     },
     "typographyMeta": {
       "headline": { "displayName": "Workspace Headline", "purpose": "Names the current operating surface." },
+      "body": { "displayName": "Interface Body", "purpose": "Primary operational copy and form labels." },
+      "label": { "displayName": "Dense Label", "purpose": "Compact metadata and region labels." },
       "data": { "displayName": "Instrument Data", "purpose": "Commands, counts, durations, timestamps, and ranked values." }
     },
     "shadows": [
-      { "name": "overlay", "value": "-18px 0 50px rgba(0,0,0,0.34)", "purpose": "Only for side panels when they overlay narrow workspaces." },
-      { "name": "tooltip", "value": "0 8px 26px rgba(0,0,0,0.38)", "purpose": "Separates transient data detail from the analytical canvas." }
+      { "name": "overlay", "value": "-18px 0 50px rgba(0,0,0,0.34)", "purpose": "Separates responsive overlay panels from the workspace." },
+      { "name": "tooltip", "value": "0 8px 26px rgba(0,0,0,0.38)", "purpose": "Separates transient detail from the operating surface." }
     ],
     "motion": [
-      { "name": "state-only", "value": "prefers-reduced-motion aware", "purpose": "Motion is limited to state feedback such as the loading pulse." }
+      { "name": "state-only", "value": "prefers-reduced-motion aware", "purpose": "Motion is limited to useful state feedback." }
     ],
     "breakpoints": [
       { "name": "overlay-inspector", "value": "1279px" },
-      { "name": "single-column", "value": "899px" }
+      { "name": "single-column", "value": "899px" },
+      { "name": "stacked-forms", "value": "599px" }
     ]
   },
   "components": [
     {
-      "name": "Selected Segment",
-      "kind": "chip",
-      "refersTo": "segmented-selected",
-      "description": "Selected state for compact range and sorting controls.",
-      "html": "<button class=\"ds-segment\">全年</button>",
-      "css": ".ds-segment { height:26px; padding:0 10px; border:0; border-radius:3px; background:#21302a; color:#c9f9e6; font:11px 'Segoe UI',sans-serif; cursor:pointer; } .ds-segment:hover { color:#edf3f0; } .ds-segment:focus-visible { outline:1px solid #67d9ad; outline-offset:2px; }"
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Inverted white command for the primary action in a focused workflow.",
+      "html": "<button class=\"ds-primary\">Save</button>",
+      "css": ".ds-primary { padding:5px 12px; border:1px solid #f5f6f7; border-radius:3px; background:#f5f6f7; color:#030405; font:600 13px 'Segoe UI',sans-serif; cursor:pointer; } .ds-primary:hover { background:#ffffff; } .ds-primary:focus-visible { outline:2px solid #ffffff; outline-offset:2px; }"
     },
     {
       "name": "Instrument Field",
       "kind": "input",
       "refersTo": "field",
-      "description": "Compact project and analysis filter field.",
+      "description": "Compact filter and settings field on the input-black plane.",
       "html": "<input class=\"ds-field\" value=\"Galaxy Terminal\" />",
-      "css": ".ds-field { height:30px; padding:0 9px; border:1px solid #3b4744; border-radius:3px; background:#0b0f10; color:#edf3f0; font:13px 'Segoe UI',sans-serif; } .ds-field:hover { border-color:#596862; } .ds-field:focus-visible { outline:1px solid #67d9ad; outline-offset:2px; }"
+      "css": ".ds-field { height:30px; padding:0 9px; border:1px solid #3d4349; border-radius:3px; background:#07090b; color:#f7f8f8; font:13px 'Segoe UI',sans-serif; } .ds-field:hover { border-color:#4c5258; } .ds-field:focus-visible { outline:2px solid #ffffff; outline-offset:2px; }"
+    },
+    {
+      "name": "Selected Segment",
+      "kind": "chip",
+      "refersTo": "segmented-selected",
+      "description": "Neutral selected state for compact mode and range controls.",
+      "html": "<button class=\"ds-segment\">Year</button>",
+      "css": ".ds-segment { height:26px; padding:0 10px; border:1px solid #3d4349; border-radius:3px; background:#202429; color:#ffffff; font:600 11px 'Segoe UI',sans-serif; cursor:pointer; } .ds-segment:hover { background:#181b1f; } .ds-segment:focus-visible { outline:2px solid #ffffff; outline-offset:2px; }"
     },
     {
       "name": "Navigation Item",
       "kind": "nav",
       "refersTo": "navigation-active",
-      "description": "Icon-led active destination in the primary rail.",
-      "html": "<button class=\"ds-nav\" aria-label=\"Insights\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" stroke=\"currentColor\"><path d=\"M2.5 12.5h11M3.5 10V7.5M6.5 10V4.5M9.5 10V6M12.5 10V2.5\"/></svg></button>",
-      "css": ".ds-nav { width:38px; height:38px; display:grid; place-items:center; border:0; border-radius:4px; background:#17221e; color:#67d9ad; cursor:pointer; } .ds-nav:hover { background:#1d2b26; color:#a7f3d0; } .ds-nav:focus-visible { outline:1px solid #67d9ad; outline-offset:2px; }"
+      "description": "Brilliant-white active destination on a compact graphite rail cell.",
+      "html": "<button class=\"ds-nav\" aria-label=\"Insights\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"><path d=\"M4 19V9M10 19V5M16 19v-7M22 19V3\"/></svg></button>",
+      "css": ".ds-nav { width:38px; height:38px; display:grid; place-items:center; border:0; border-radius:4px; background:#181b1f; color:#ffffff; cursor:pointer; } .ds-nav:hover { background:#202429; } .ds-nav:focus-visible { outline:2px solid #ffffff; outline-offset:2px; }"
     },
     {
       "name": "Activity Cell",
       "kind": "custom",
-      "description": "The signature fixed-density daily activity mark.",
+      "description": "Fixed-density daily activity mark in the grayscale data ramp.",
       "html": "<button class=\"ds-activity\" aria-label=\"12 commands\"></button>",
-      "css": ".ds-activity { width:11px; height:11px; padding:0; border:0; border-radius:1px; background:#31936c; cursor:crosshair; } .ds-activity:hover { background:#65d8aa; } .ds-activity:focus-visible { outline:1px solid #a7f3d0; outline-offset:2px; }"
+      "css": ".ds-activity { width:11px; height:11px; padding:0; border:0; border-radius:1px; background:#858b91; cursor:crosshair; } .ds-activity:hover { background:#eef0f1; } .ds-activity:focus-visible { outline:2px solid #ffffff; outline-offset:2px; }"
     }
   ],
   "narrative": {
-    "northStar": "The Precision Instrument Bench",
-    "overview": "Galaxy Terminal feels like a calibrated desktop instrument paired with a technical publication grid. It is dense without being cramped: hierarchy comes from alignment, fine rules, measured whitespace, and data typography rather than decoration or oversized containers.",
-    "keyCharacteristics": ["Charcoal materials with one cyan-green signal color.", "Continuous analytical canvases separated by fine rules.", "Compact controls, exact data columns, and flat navigation.", "Monospaced numbers and commands; humanist system type for interface copy."],
+    "northStar": "The Monochrome Observatory",
+    "overview": "Galaxy Terminal is a deep-black operating field cut by brilliant-white signals. Terminal and insights surfaces share one continuous dark plane, with hierarchy carried by grayscale steps, fine rules, exact data typography, one orbital-G mark, and one rounded line-icon family.",
+    "keyCharacteristics": ["Near-black planes with brilliant-white active and focus states.", "A single flat orbital-G brand mark in the title bar only.", "Rounded Lucide line icons mapped by product meaning.", "Dense analytical layouts separated by fine neutral rules.", "Semantic green, amber, and red reserved for outcome states."],
     "rules": [
-      { "name": "The One Signal Rule", "body": "Cyan-green is the only routine accent. Amber and red communicate exceptional warning and failure states, never decoration.", "section": "colors" },
-      { "name": "The Natural Spacing Rule", "body": "Do not add tracking to headings, labels, tabs, or buttons. Structure must come from grid and weight.", "section": "typography" },
-      { "name": "The Flat Workbench Rule", "body": "Never add resting card shadows or floating dashboards inside the main canvas.", "section": "elevation" }
+      { "name": "The White Signal Rule", "body": "Brilliant white and neutral silver are the only routine accent colors for selection, focus, navigation, charts, and primary actions.", "section": "colors" },
+      { "name": "The Semantic Color Rule", "body": "Green means success, amber means warning or blocked, and red means error or danger.", "section": "colors" },
+      { "name": "The Natural Spacing Rule", "body": "Default letter spacing is zero; hierarchy comes from weight, size, alignment, and whitespace.", "section": "typography" },
+      { "name": "The Flat Observatory Rule", "body": "Never add resting card shadows, luminous halos, glass blur, or floating dashboard tiles to the main canvas.", "section": "elevation" }
     ],
-    "dos": ["Do use fine rules and alignment to define analytical regions.", "Do preserve fixed density for heatmaps and scroll them on narrow screens.", "Do keep terminal instances mounted when switching workspace modes."],
-    "donts": ["Don't restore stars, purple glow, gradients, or decorative pixel motion.", "Don't nest cards inside cards or turn every statistic into a rounded container.", "Don't use filled progress tracks for scores or rankings; prefer exact values and thin measures."]
+    "dos": ["Do use white, silver, and graphite to communicate routine hierarchy and interaction.", "Do use the shared Lucide semantic adapter for every familiar operation icon.", "Do keep exactly one visible brand mark in the title bar.", "Do reserve green, amber, and red for success, warning or blocked, and error or danger."],
+    "donts": ["Don't restore purple, violet, cyan-green, or signal-green as a regular theme accent.", "Don't add gradients, glow, star fields, texture, or decorative pixel motion.", "Don't duplicate the Galaxy mark in the navigation rail or feature panels.", "Don't draw one-off operation SVGs or use emoji and Unicode symbols in place of shared icons."]
   }
 }

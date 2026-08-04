@@ -8,6 +8,7 @@
 | 组件 | 许可 |
 | --- | --- |
 | directories v5.0.1 | MIT OR Apache-2.0 |
+| encoding_rs v0.8.35 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
 | notify v6.1.1 | CC0-1.0 |
 | parking_lot v0.12.5 | MIT OR Apache-2.0 |
 | portable-pty v0.8.1 | MIT |
@@ -28,6 +29,7 @@
 | tracing v0.1.44 | MIT |
 | tracing-subscriber v0.3.23 | MIT |
 | uuid v1.24.0 | Apache-2.0 OR MIT |
+| windows-sys v0.61.2 | MIT OR Apache-2.0 |
 | winreg v0.52.0 | MIT |
 
 ## npm 依赖（生产）
@@ -41,6 +43,7 @@
 | @xterm/addon-web-links@0.11.0 | MIT |
 | @xterm/addon-webgl@0.18.0 | MIT |
 | @xterm/xterm@5.5.0 | MIT |
+| lucide-react@1.28.0 | ISC |
 | react-dom@18.3.1 | MIT |
 | react@18.3.1 | MIT |
 | zustand@5.0.14 | MIT |
