@@ -16,13 +16,13 @@ const GENERATOR = join(ROOT, "scripts", "gen-icons.mjs");
 const MASTER = join(ROOT, "public", "brand", "galaxy-mark.svg");
 
 const outputs = [
-  ["public", "icon.png"],
-  ["public", "apple-touch-icon.png"],
-  ["tauri", "32x32.png"],
-  ["tauri", "128x128.png"],
-  ["tauri", "128x128@2x.png"],
-  ["tauri", "icon.png"],
-  ["tauri", "icon.ico"],
+  ["public", "icon.png", 256],
+  ["public", "apple-touch-icon.png", 180],
+  ["tauri", "32x32.png", 32],
+  ["tauri", "128x128.png", 128],
+  ["tauri", "128x128@2x.png", 256],
+  ["tauri", "icon.png", 256],
+  ["tauri", "icon.ico", null],
 ];
 
 test("renders neutral package icons with transparent outside corners", async (t) => {
@@ -69,9 +69,9 @@ test("renders neutral package icons with transparent outside corners", async (t)
     maxChannelSpread <= 2,
     `brand raster contains chromatic pixels (channel spread ${maxChannelSpread})`,
   );
-  assert.deepEqual(readIcoSizes(readFileSync(join(tauriDir, "icon.ico"))), [16, 32, 48, 256]);
+  assert.deepEqual(readIcoSizes(readFileSync(join(tauriDir, "icon.ico")), PNG), [16, 32, 48, 256]);
 
-  for (const [area, name] of outputs) {
+  for (const [area, name, expectedSize] of outputs) {
     const generated = join(area === "public" ? publicDir : tauriDir, name);
     const committed = join(
       area === "public" ? join(ROOT, "public") : join(ROOT, "src-tauri", "icons"),
@@ -82,15 +82,41 @@ test("renders neutral package icons with transparent outside corners", async (t)
       readFileSync(committed),
       `${name} is stale; run npm run gen:icons`,
     );
+    if (expectedSize != null) {
+      const decoded = PNG.sync.read(readFileSync(generated));
+      assert.deepEqual(
+        [decoded.width, decoded.height],
+        [expectedSize, expectedSize],
+        `${name} has the wrong dimensions`,
+      );
+    }
   }
 });
 
-function readIcoSizes(buffer) {
+function readIcoSizes(buffer, PNG) {
+  assert.equal(buffer.readUInt16LE(0), 0, "ICO reserved header must be zero");
+  assert.equal(buffer.readUInt16LE(2), 1, "ICO type must be icon");
   const count = buffer.readUInt16LE(4);
   const sizes = [];
   for (let index = 0; index < count; index += 1) {
-    const size = buffer[6 + index * 16];
-    sizes.push(size === 0 ? 256 : size);
+    const entryOffset = 6 + index * 16;
+    const width = buffer[entryOffset] || 256;
+    const height = buffer[entryOffset + 1] || 256;
+    const byteLength = buffer.readUInt32LE(entryOffset + 8);
+    const imageOffset = buffer.readUInt32LE(entryOffset + 12);
+    assert.equal(width, height, "ICO entry must be square");
+    assert.ok(imageOffset >= 6 + count * 16, "ICO payload overlaps its directory");
+    assert.ok(imageOffset + byteLength <= buffer.length, "ICO payload exceeds file bounds");
+
+    const payload = buffer.subarray(imageOffset, imageOffset + byteLength);
+    assert.deepEqual(
+      [...payload.subarray(0, 8)],
+      [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+      "ICO payload must be PNG",
+    );
+    const decoded = PNG.sync.read(payload);
+    assert.deepEqual([decoded.width, decoded.height], [width, height]);
+    sizes.push(width);
   }
   return sizes;
 }
