@@ -80,7 +80,10 @@ pub fn run() {
         }
 
         // Register configured global hotkey.
-        register_global_hotkey(&handle);
+        let hotkey = built.state.store.read().config.global_hotkey.clone();
+        if let Err(e) = apply_global_hotkey(&handle, &hotkey) {
+            tracing::warn!("全局热键注册失败: {}", e.message);
+        }
 
         // Restore window geometry, clamped into visible monitors.
         let window = handle.get_webview_window("main").expect("main window");
@@ -174,16 +177,22 @@ fn install_panic_hook() {
     }));
 }
 
-fn register_global_hotkey(handle: &tauri::AppHandle) {
+pub(crate) fn apply_global_hotkey(
+    handle: &tauri::AppHandle,
+    hotkey: &Option<String>,
+) -> error::CmdResult<()> {
     use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
-    let Some(state) = handle.try_state::<Arc<AppState>>() else { return };
-    let hotkey = state.store.read().config.global_hotkey.clone();
-    let _ = handle.global_shortcut().unregister_all();
-    let Some(hotkey) = hotkey.filter(|h| !h.trim().is_empty()) else { return };
+    handle
+        .global_shortcut()
+        .unregister_all()
+        .map_err(|e| error::CmdError::new("GLOBAL_HOTKEY", format!("清除旧全局热键失败: {e}")))?;
+    let Some(hotkey) = hotkey.as_deref().filter(|h| !h.trim().is_empty()) else {
+        return Ok(());
+    };
     let handle2 = handle.clone();
-    let res = handle.global_shortcut().on_shortcut(
-        hotkey.as_str(),
-        move |_app, _shortcut, event| {
+    handle
+        .global_shortcut()
+        .on_shortcut(hotkey, move |_app, _shortcut, event| {
             if event.state() == ShortcutState::Pressed {
                 if let Some(window) = handle2.get_webview_window("main") {
                     if window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false)
@@ -195,9 +204,10 @@ fn register_global_hotkey(handle: &tauri::AppHandle) {
                     }
                 }
             }
-        },
-    );
-    if let Err(e) = res {
-        tracing::warn!("全局热键注册失败: {e}");
-    }
+        })
+        .map_err(|e| error::CmdError::new(
+            "GLOBAL_HOTKEY",
+            format!("全局热键无效或已被占用: {e}"),
+        ))?;
+    Ok(())
 }

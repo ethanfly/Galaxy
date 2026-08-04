@@ -26,6 +26,10 @@ pub async fn config_update(
     config: AppConfig,
 ) -> CmdResult<AppConfig> {
     validate_config(&config)?;
+    let previous_hotkey = state.store.read().config.global_hotkey.clone();
+    reconcile_global_hotkey_change(&previous_hotkey, &config.global_hotkey, |hotkey| {
+        crate::apply_global_hotkey(&state.app, hotkey)
+    })?;
     {
         let mut store = state.store.write();
         store.config = config.clone();
@@ -107,6 +111,64 @@ pub fn validate_config(config: &AppConfig) -> CmdResult<()> {
         }
     }
     Ok(())
+}
+
+fn reconcile_global_hotkey_change<F>(
+    current: &Option<String>,
+    next: &Option<String>,
+    mut apply: F,
+) -> CmdResult<()>
+where
+    F: FnMut(&Option<String>) -> CmdResult<()>,
+{
+    if current == next {
+        return Ok(());
+    }
+    if let Err(error) = apply(next) {
+        let _ = apply(current);
+        return Err(error);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod hotkey_tests {
+    use super::*;
+
+    #[test]
+    fn changed_global_hotkey_is_applied() {
+        let current = Some("Ctrl+Alt+T".to_string());
+        let next = Some("Ctrl+Alt+G".to_string());
+        let mut applied = Vec::new();
+
+        reconcile_global_hotkey_change(&current, &next, |value| {
+            applied.push(value.clone());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(applied, vec![next]);
+    }
+
+    #[test]
+    fn failed_global_hotkey_change_restores_the_previous_registration() {
+        let current = Some("Ctrl+Alt+T".to_string());
+        let next = Some("Ctrl+Alt+G".to_string());
+        let mut applied = Vec::new();
+
+        let error = reconcile_global_hotkey_change(&current, &next, |value| {
+            applied.push(value.clone());
+            if value.as_deref() == next.as_deref() {
+                Err(CmdError::new("GLOBAL_HOTKEY", "热键已被占用"))
+            } else {
+                Ok(())
+            }
+        })
+        .unwrap_err();
+
+        assert_eq!(error.code, "GLOBAL_HOTKEY");
+        assert_eq!(applied, vec![next, current]);
+    }
 }
 
 #[tauri::command]
