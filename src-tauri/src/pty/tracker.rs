@@ -8,6 +8,28 @@ use crate::core::models::{AgentKind, AgentStatus, CommandBlock};
 
 const TAIL_CAP: usize = 16 * 1024;
 const BLOCK_OUTPUT_CAP: usize = 128 * 1024;
+const OSC_PENDING_CAP: usize = 8 * 1024;
+
+fn push_capped_tail(target: &mut String, data: &str, cap: usize) {
+    if data.len() >= cap {
+        let mut start = data.len() - cap;
+        while !data.is_char_boundary(start) {
+            start += 1;
+        }
+        target.clear();
+        target.push_str(&data[start..]);
+        return;
+    }
+
+    target.push_str(data);
+    if target.len() > cap {
+        let mut cut = target.len() - cap;
+        while !target.is_char_boundary(cut) {
+            cut += 1;
+        }
+        target.drain(..cut);
+    }
+}
 
 /// Strip ANSI CSI / OSC sequences for heuristic analysis.
 pub fn strip_ansi(input: &str) -> String {
@@ -75,7 +97,9 @@ pub fn sanitize_command(cmd: &str) -> String {
         }
         break;
     }
-    s.chars().filter(|c| !c.is_control() || *c == '\t').collect()
+    s.chars()
+        .filter(|c| !c.is_control() || *c == '\t')
+        .collect()
 }
 
 /// Tracks typed command text from PTY input, ignoring escape sequences
@@ -292,25 +316,33 @@ impl PaneTracker {
                         i = next;
                     }
                     None => {
-                        // Incomplete OSC — keep remainder for next chunk.
-                        self.pending = text[i..].to_string();
+                        // Malformed programs must not grow the shared aggregator's
+                        // carry buffer without bound. Raw PTY output is unaffected.
+                        let remainder = &text[i..];
+                        if remainder.len() <= OSC_PENDING_CAP {
+                            self.pending = remainder.to_string();
+                        }
                         break;
                     }
                 }
-            } else if plain.len() < BLOCK_OUTPUT_CAP {
-                plain.push(bytes[i] as char);
-                i += 1;
             } else {
+                let start = i;
                 i += 1;
+                while i < bytes.len()
+                    && !(bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b']')
+                {
+                    i += 1;
+                }
+                push_capped_tail(&mut plain, &text[start..i], BLOCK_OUTPUT_CAP);
             }
         }
         if self.block_open {
             self.last_activity = std::time::Instant::now();
-            self.block_output.push_str(&strip_ansi(&plain));
-            if self.block_output.len() > BLOCK_OUTPUT_CAP {
-                let over = self.block_output.len() - BLOCK_OUTPUT_CAP;
-                self.block_output.drain(..over);
-            }
+            push_capped_tail(
+                &mut self.block_output,
+                &strip_ansi(&plain),
+                BLOCK_OUTPUT_CAP,
+            );
         }
         ev
     }
@@ -350,13 +382,10 @@ impl PaneTracker {
                     }
                     // Command finished; optional exit code.
                     s if s.starts_with('D') => {
-                        let exit = parts
-                            .next()
-                            .and_then(|c| c.parse::<i32>().ok());
+                        let exit = parts.next().and_then(|c| c.parse::<i32>().ok());
                         // 133;D;<code> form arrives with code in same part
-                        let exit = exit.or_else(|| {
-                            s.strip_prefix("D;").and_then(|c| c.parse::<i32>().ok())
-                        });
+                        let exit = exit
+                            .or_else(|| s.strip_prefix("D;").and_then(|c| c.parse::<i32>().ok()));
                         if let Some(done) = self.close_block(exit) {
                             ev.completed_block = Some(done);
                         }
@@ -456,7 +485,11 @@ pub fn simplify_title(raw: &str) -> String {
         .find(|s| !s.is_empty())
         .unwrap_or(cleaned)
         .trim();
-    if name.is_empty() { t.chars().take(48).collect() } else { name.chars().take(48).collect() }
+    if name.is_empty() {
+        t.chars().take(48).collect()
+    } else {
+        name.chars().take(48).collect()
+    }
 }
 
 /// Heuristic agent status inference from the stripped output tail (§5.4).
@@ -480,7 +513,14 @@ pub fn infer_agent_status(kind: AgentKind, stripped_tail: &str) -> AgentStatus {
         AgentKind::Copilot => &["allow?", "confirm", "approve this", "y/n"],
         AgentKind::Aider => &["add command output to the chat", "(y/n)", "add these files"],
         AgentKind::Cline | AgentKind::Roo => &["approve", "reject", "auto-approve", "pending"],
-        _ => &["confirm", "allow", "y/n", "permission", "approve", "waiting for"],
+        _ => &[
+            "confirm",
+            "allow",
+            "y/n",
+            "permission",
+            "approve",
+            "waiting for",
+        ],
     };
     if blocked_markers.iter().any(|m| lower.contains(m)) {
         return AgentStatus::Blocked;
@@ -491,9 +531,19 @@ pub fn infer_agent_status(kind: AgentKind, stripped_tail: &str) -> AgentStatus {
         AgentKind::Codex => &["esc to interrupt", "working"],
         AgentKind::Gemini => &["thinking", "running", "generating", "esc to cancel"],
         AgentKind::Aider => &["applied edit", "committing", "running", "scanning repo"],
-        _ => &["esc to interrupt", "working", "thinking", "spinner", "running tool", "generating"],
+        _ => &[
+            "esc to interrupt",
+            "working",
+            "thinking",
+            "spinner",
+            "running tool",
+            "generating",
+        ],
     };
-    if working_markers.iter().any(|m| lower.contains(&m.to_lowercase())) {
+    if working_markers
+        .iter()
+        .any(|m| lower.contains(&m.to_lowercase()))
+    {
         return AgentStatus::Working;
     }
 
@@ -627,9 +677,45 @@ mod tests {
     }
 
     #[test]
+    fn block_output_cap_preserves_utf8_boundaries() {
+        let mut t = PaneTracker::default();
+        t.begin_heuristic_block("emit-cjk".into());
+
+        t.scan(&"中".repeat(21_846));
+        t.scan("A");
+
+        let (_, output, _) = t.close_block(None).expect("block remains open");
+        assert!(output.len() <= BLOCK_OUTPUT_CAP);
+        assert!(output.starts_with('中'));
+        assert!(output.ends_with('A'));
+    }
+
+    #[test]
+    fn unterminated_osc_carry_is_bounded_and_scanning_recovers() {
+        let mut t = PaneTracker::default();
+        t.begin_heuristic_block("emit-broken-osc".into());
+
+        t.scan("\u{1b}]0;");
+        for _ in 0..32 {
+            t.scan(&"x".repeat(1024));
+        }
+
+        assert!(t.pending.len() <= 16 * 1024);
+        t.scan("visible-after-broken-osc");
+        let (_, output, _) = t.close_block(None).expect("block remains open");
+        assert!(output.contains("visible-after-broken-osc"));
+    }
+
+    #[test]
     fn agent_executables_detected() {
-        assert_eq!(detect_agent_kind("claude --resume x"), Some(AgentKind::ClaudeCode));
-        assert_eq!(detect_agent_kind("C:\\tools\\codex.exe"), Some(AgentKind::Codex));
+        assert_eq!(
+            detect_agent_kind("claude --resume x"),
+            Some(AgentKind::ClaudeCode)
+        );
+        assert_eq!(
+            detect_agent_kind("C:\\tools\\codex.exe"),
+            Some(AgentKind::Codex)
+        );
         assert_eq!(detect_agent_kind("gemini"), Some(AgentKind::Gemini));
         assert_eq!(detect_agent_kind("gh copilot"), Some(AgentKind::Copilot));
         assert_eq!(detect_agent_kind("aider"), Some(AgentKind::Aider));
@@ -641,9 +727,15 @@ mod tests {
         assert_eq!(detect_agent_kind("pi --session x"), Some(AgentKind::Pi));
         assert_eq!(detect_agent_kind("hermes chat"), Some(AgentKind::Hermes));
         assert_eq!(detect_agent_kind("openclaw"), Some(AgentKind::OpenClaw));
-        assert_eq!(detect_agent_kind("antigravity"), Some(AgentKind::Antigravity));
+        assert_eq!(
+            detect_agent_kind("antigravity"),
+            Some(AgentKind::Antigravity)
+        );
         assert_eq!(detect_agent_kind("amp"), Some(AgentKind::Amp));
-        assert_eq!(detect_agent_kind("npx @google/gemini-cli"), Some(AgentKind::Gemini));
+        assert_eq!(
+            detect_agent_kind("npx @google/gemini-cli"),
+            Some(AgentKind::Gemini)
+        );
         assert_eq!(detect_agent_kind("npm run dev"), None);
     }
 }

@@ -49,6 +49,7 @@ export function Workspace() {
       {sessions.map((session) => (
         <div
           key={session.id}
+          data-session-id={session.id}
           style={{
             display: session.id === currentSessionId ? "flex" : "none",
             flex: 1,
@@ -172,6 +173,8 @@ function PaneCell({ pane, session }: { pane: Pane; session: Session }) {
 
   const doSplit = async (direction: "row" | "column") => {
     const updated = await paneSplit(pane.id, direction);
+    const selectedPane = layoutPanes(updated.layout).find((item) => item.active)?.id;
+    if (selectedPane) setFocusedPane(updated.id, selectedPane);
     updateSessionLocal(updated);
   };
 

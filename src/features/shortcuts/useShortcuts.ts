@@ -19,6 +19,10 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export function useShortcuts() {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      // IMEs report keyCode 229 while composing. Global chords must not
+      // interrupt the composition or turn candidate-selection keystrokes into
+      // destructive terminal actions (close/split/panel toggles).
+      if (e.isComposing || e.keyCode === 229) return;
       const config = useAppStore.getState().config;
       if (!config) return;
       const ui = useUiStore.getState();
@@ -81,6 +85,8 @@ async function dispatch(command: string): Promise<void> {
       const focused = ts.focusedPane[session.id] ?? layoutPanes(session.layout)[0]?.id;
       if (focused) {
         const updated = await paneSplit(focused, command === "pane.splitRight" ? "row" : "column");
+        const selectedPane = layoutPanes(updated.layout).find((pane) => pane.active)?.id;
+        if (selectedPane) ts.setFocusedPane(updated.id, selectedPane);
         app.updateSessionLocal(updated);
       }
       return;
@@ -152,7 +158,14 @@ type Direction = "left" | "right" | "up" | "down";
 /** Geometric pane navigation using rendered rects (DOM data-pane-id). */
 function focusDirectional(sessionId: string, dir: Direction) {
   const ts = useTerminalStore.getState();
-  const panes = [...document.querySelectorAll<HTMLElement>("[data-pane-id]")];
+  const sessionRoot = [...document.querySelectorAll<HTMLElement>("[data-session-id]")].find(
+    (element) => element.dataset.sessionId === sessionId,
+  );
+  const panes = sessionRoot
+    ? [...sessionRoot.querySelectorAll<HTMLElement>("[data-pane-id]")].filter(
+        (element) => element.getClientRects().length > 0,
+      )
+    : [];
   if (panes.length === 0) return;
   const currentId = ts.focusedPane[sessionId];
   const currentEl = panes.find((el) => el.dataset.paneId === currentId) ?? panes[0];
@@ -179,9 +192,6 @@ function focusDirectional(sessionId: string, dir: Direction) {
   }
   if (best) {
     ts.setFocusedPane(sessionId, best.id);
-    best = null;
-    const el = panes.find((p) => p.dataset.paneId === currentId);
-    void el;
   }
   // Focus the xterm belonging to the newly focused pane.
   const focusId = useTerminalStore.getState().focusedPane[sessionId];

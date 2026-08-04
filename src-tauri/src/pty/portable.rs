@@ -16,7 +16,9 @@ pub struct PortablePtyBackend {
 
 impl Default for PortablePtyBackend {
     fn default() -> Self {
-        Self { system: Mutex::new(portable_pty::native_pty_system()) }
+        Self {
+            system: Mutex::new(portable_pty::native_pty_system()),
+        }
     }
 }
 
@@ -76,7 +78,7 @@ impl PtyBackend for PortablePtyBackend {
             .map_err(|e| AppError::Pty(format!("启动进程 {} 失败: {e}", spec.program)))?;
 
         Ok(Box::new(PortablePtyProcess {
-            master: pair.master,
+            master: Mutex::new(Some(pair.master)),
             child: Arc::new(Mutex::new(child)),
             writer: Mutex::new(None),
             killed: Arc::new(AtomicBool::new(false)),
@@ -85,36 +87,46 @@ impl PtyBackend for PortablePtyBackend {
 }
 
 struct PortablePtyProcess {
-    master: Box<dyn MasterPty + Send>,
+    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     child: Arc<Mutex<Box<dyn Child + Send + Sync>>>,
     writer: Mutex<Option<Box<dyn std::io::Write + Send>>>,
     killed: Arc<AtomicBool>,
 }
 
 impl PtyProcess for PortablePtyProcess {
-    fn take_reader(&mut self) -> Result<Box<dyn Read + Send>, AppError> {
-        self.master
+    fn take_reader(&self) -> Result<Box<dyn Read + Send>, AppError> {
+        let master = self.master.lock();
+        master
+            .as_ref()
+            .ok_or_else(|| AppError::Pty("PTY transport 已关闭".into()))?
             .try_clone_reader()
             .map_err(|e| AppError::Pty(format!("克隆 PTY 读取端失败: {e}")))
     }
 
-    fn write(&mut self, data: &[u8]) -> Result<(), AppError> {
+    fn write(&self, data: &[u8]) -> Result<(), AppError> {
         let mut guard = self.writer.lock();
         if guard.is_none() {
-            let w = self
-                .master
+            let master = self.master.lock();
+            let w = master
+                .as_ref()
+                .ok_or_else(|| AppError::Pty("PTY transport 已关闭".into()))?
                 .take_writer()
                 .map_err(|e| AppError::Pty(format!("获取 PTY 写入端失败: {e}")))?;
             *guard = Some(w);
         }
-        let w = guard.as_mut().ok_or_else(|| AppError::Pty("PTY 写入端未就绪".into()))?;
+        let w = guard
+            .as_mut()
+            .ok_or_else(|| AppError::Pty("PTY 写入端未就绪".into()))?;
         w.write_all(data)
             .and_then(|_| w.flush())
             .map_err(|e| AppError::Pty(format!("PTY 写入失败: {e}")))
     }
 
-    fn resize(&mut self, cols: u16, rows: u16) -> Result<(), AppError> {
-        self.master
+    fn resize(&self, cols: u16, rows: u16) -> Result<(), AppError> {
+        let master = self.master.lock();
+        master
+            .as_ref()
+            .ok_or_else(|| AppError::Pty("PTY transport 已关闭".into()))?
             .resize(PtySize {
                 rows: rows.max(2),
                 cols: cols.max(2),
@@ -124,13 +136,23 @@ impl PtyProcess for PortablePtyProcess {
             .map_err(|e| AppError::Pty(format!("PTY 调整尺寸失败: {e}")))
     }
 
-    fn kill(&mut self) -> Result<(), AppError> {
+    fn kill(&self) -> Result<(), AppError> {
         self.killed.store(true, Ordering::SeqCst);
         let mut child = self.child.lock();
-        child.kill().map_err(|e| AppError::Pty(format!("结束进程失败: {e}")))
+        child
+            .kill()
+            .map_err(|e| AppError::Pty(format!("结束进程失败: {e}")))
     }
 
-    fn try_wait(&mut self) -> Result<Option<i32>, AppError> {
+    fn close_transport(&self) -> Result<(), AppError> {
+        // Drop ClosePseudoConsole independently from any thread blocked while
+        // holding the writer handle or an Arc to this process object.
+        let master = self.master.lock().take();
+        drop(master);
+        Ok(())
+    }
+
+    fn try_wait(&self) -> Result<Option<i32>, AppError> {
         let mut child = self.child.lock();
         match child.try_wait() {
             Ok(Some(status)) => Ok(Some(status.exit_code() as i32)),

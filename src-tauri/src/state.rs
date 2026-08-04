@@ -83,7 +83,10 @@ impl AppState {
             }
             Err(e) => {
                 self.read_only.store(true, Ordering::SeqCst);
-                tracing::error!("持久化失败，进入只读警告状态: {}", logging::redact(&e.to_string()));
+                tracing::error!(
+                    "持久化失败，进入只读警告状态: {}",
+                    logging::redact(&e.to_string())
+                );
                 Err(e)
             }
         }
@@ -129,7 +132,13 @@ impl AppState {
         let _ = self.app.emit(events::NOTIFICATION_NEW, &item);
         if system {
             use tauri_plugin_notification::NotificationExt;
-            let _ = self.app.notification().builder().title(title).body(body).show();
+            let _ = self
+                .app
+                .notification()
+                .builder()
+                .title(title)
+                .body(body)
+                .show();
         }
         item
     }
@@ -153,7 +162,9 @@ impl AppState {
     }
 
     pub fn emit_open_here(&self, path: &str) {
-        let _ = self.app.emit(events::OPEN_HERE, serde_json::json!({ "path": path }));
+        let _ = self
+            .app
+            .emit(events::OPEN_HERE, serde_json::json!({ "path": path }));
     }
 
     pub fn queue_open_here(&self, path: &str) {
@@ -193,10 +204,10 @@ impl PtyEventSink for Sink {
             }
         }
         let _ = self.state.persist_debounced();
-        let _ = self
-            .state
-            .app
-            .emit(events::PTY_EXIT, serde_json::json!({ "paneId": pane_id, "exitCode": code }));
+        let _ = self.state.app.emit(
+            events::PTY_EXIT,
+            serde_json::json!({ "paneId": pane_id, "exitCode": code }),
+        );
     }
 
     fn title(&self, pane_id: &str, session_id: &str, title: &str) {
@@ -226,13 +237,7 @@ impl PtyEventSink for Sink {
         );
     }
 
-    fn agent_status(
-        &self,
-        pane_id: &str,
-        session_id: &str,
-        kind: AgentKind,
-        status: AgentStatus,
-    ) {
+    fn agent_status(&self, pane_id: &str, session_id: &str, kind: AgentKind, status: AgentStatus) {
         let prev = self
             .state
             .agent_status
@@ -240,7 +245,10 @@ impl PtyEventSink for Sink {
             .get(pane_id)
             .copied()
             .unwrap_or(AgentStatus::Idle);
-        self.state.agent_status.write().insert(pane_id.to_string(), status);
+        self.state
+            .agent_status
+            .write()
+            .insert(pane_id.to_string(), status);
         // Agent badge detection also flows through here: keep the pane meta.
         // IMPORTANT: never call persist* while holding store.write() — persist
         // takes store.read() and parking_lot RwLock will deadlock (app freeze
@@ -274,7 +282,8 @@ impl PtyEventSink for Sink {
         let notify_enabled = self.state.store.read().config.agent_notifications;
         if notify_enabled {
             let (title, body) = match (prev, status) {
-                (AgentStatus::Working, AgentStatus::Idle) | (AgentStatus::Working, AgentStatus::Done) => (
+                (AgentStatus::Working, AgentStatus::Idle)
+                | (AgentStatus::Working, AgentStatus::Done) => (
                     format!("{} 已完成", kind.label()),
                     "Agent 任务结束，可以查看结果".to_string(),
                 ),
@@ -293,7 +302,13 @@ impl PtyEventSink for Sink {
                     .iter()
                     .find(|s| s.id == session_id)
                     .map(|s| s.project_id.clone());
-                self.state.add_notification(&title, &body, Some(pane_id), project_id.as_deref(), true);
+                self.state.add_notification(
+                    &title,
+                    &body,
+                    Some(pane_id),
+                    project_id.as_deref(),
+                    true,
+                );
             }
         }
     }
@@ -359,11 +374,16 @@ pub fn build_state(app: AppHandle) -> Result<BuiltState, AppError> {
         Some(rs) => !rs.clean_shutdown,
         None => false,
     };
-    write_run_state(&paths.run_state, false);
+    if let Err(error) = write_run_state(&paths.run_state, false) {
+        tracing::error!("写入启动状态失败: {}", logging::redact(&error.to_string()));
+    }
 
     let persistence = Persistence::new(paths.clone())?;
     let (mut store, recovered) = persistence.load().unwrap_or_else(|e| {
-        tracing::error!("存储初始化失败，使用安全默认值: {}", logging::redact(&e.to_string()));
+        tracing::error!(
+            "存储初始化失败，使用安全默认值: {}",
+            logging::redact(&e.to_string())
+        );
         (Store::default(), true)
     });
     for s in store.sessions.iter_mut() {
@@ -374,7 +394,10 @@ pub fn build_state(app: AppHandle) -> Result<BuiltState, AppError> {
     }
 
     let blocks = BlockStore::load(&paths.blocks).map_err(|e| {
-        AppError::Persistence(format!("命令块存储初始化失败: {}", logging::redact(&e.to_string())))
+        AppError::Persistence(format!(
+            "命令块存储初始化失败: {}",
+            logging::redact(&e.to_string())
+        ))
     })?;
 
     let git = GitService::new();
@@ -404,13 +427,17 @@ pub fn build_state(app: AppHandle) -> Result<BuiltState, AppError> {
         read_only: AtomicBool::new(false),
     });
 
-    let sink: Arc<dyn PtyEventSink> = Arc::new(Sink { state: state.clone() });
+    let sink: Arc<dyn PtyEventSink> = Arc::new(Sink {
+        state: state.clone(),
+    });
     let manager = PtyManager::new(Arc::new(PortablePtyBackend::default()), sink);
     let _ = state.pty_cell.set(Arc::new(manager));
     state.refresh_triggers();
 
     if had_crash {
-        let _ = state.app.emit(events::RECOVERY_AVAILABLE, serde_json::json!({}));
+        let _ = state
+            .app
+            .emit(events::RECOVERY_AVAILABLE, serde_json::json!({}));
     }
 
     Ok(BuiltState { state, had_crash })
@@ -420,7 +447,9 @@ pub fn shutdown(state: &AppState) {
     // PTY shutdown is idempotent; persist + run_state may run twice (close + destroy).
     state.pty().shutdown();
     let _ = state.persist();
-    write_run_state(&state.data_paths().run_state, true);
+    if let Err(error) = write_run_state(&state.data_paths().run_state, true) {
+        tracing::error!("写入关闭状态失败: {}", logging::redact(&error.to_string()));
+    }
 }
 
 /// Path/link validation for opening externals (§3.3).

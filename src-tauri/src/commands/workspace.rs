@@ -6,8 +6,7 @@ use tauri::State;
 
 use crate::core::config::LayoutTemplate;
 use crate::core::models::{
-    new_id, now_rfc3339, LayoutNode, Pane, Project, Session, ShellProfile,
-    SplitDirection, Store,
+    new_id, now_rfc3339, LayoutNode, Pane, Project, Session, ShellProfile, SplitDirection, Store,
 };
 use crate::error::{AppError, CmdError, CmdResult, IntoCmd};
 use crate::pty::PtySpec;
@@ -43,7 +42,11 @@ fn dunce_canonicalize(p: &std::path::Path) -> String {
     s.strip_prefix("\\\\?\\").map(String::from).unwrap_or(s)
 }
 
-fn resolve_profile(state: &AppState, profile_id: Option<&str>, project: Option<&Project>) -> Result<ShellProfile, AppError> {
+fn resolve_profile(
+    state: &AppState,
+    profile_id: Option<&str>,
+    project: Option<&Project>,
+) -> Result<ShellProfile, AppError> {
     let profiles = state.profiles.read();
     let cfg = state.store.read().config.clone();
     let pick_id = profile_id
@@ -55,20 +58,14 @@ fn resolve_profile(state: &AppState, profile_id: Option<&str>, project: Option<&
             return Ok(p.clone());
         }
     }
-    profiles
-        .first()
-        .cloned()
-        .ok_or_else(|| AppError::InvalidInput("未检测到可用 Shell；请在设置中添加自定义 Profile".into()))
+    profiles.first().cloned().ok_or_else(|| {
+        AppError::InvalidInput("未检测到可用 Shell；请在设置中添加自定义 Profile".into())
+    })
 }
 
 /// Spawn a PTY for a pane that was just added to the store. Failures mark
 /// the pane but never fail the whole operation (§5.1 restore semantics).
-pub fn spawn_pane_process(
-    state: &AppState,
-    project_id: &str,
-    session_id: &str,
-    pane: &Pane,
-) {
+pub fn spawn_pane_process(state: &AppState, project_id: &str, session_id: &str, pane: &Pane) {
     let spec = PtySpec {
         program: pane.profile.program.clone(),
         args: pane.profile.args.clone(),
@@ -107,7 +104,10 @@ pub fn spawn_pane_process(
         }
     }
     if let Err(e) = res {
-        tracing::error!("pane 启动失败: {}", crate::services::logging::redact(&e.to_string()));
+        tracing::error!(
+            "pane 启动失败: {}",
+            crate::services::logging::redact(&e.to_string())
+        );
         if let Some(session) = state
             .store
             .write()
@@ -123,7 +123,13 @@ pub fn spawn_pane_process(
 }
 
 fn next_sort_order(store: &Store) -> i64 {
-    store.sessions.iter().map(|s| s.sort_order).max().unwrap_or(-1) + 1
+    store
+        .sessions
+        .iter()
+        .map(|s| s.sort_order)
+        .max()
+        .unwrap_or(-1)
+        + 1
 }
 
 // ---------------------------------------------------------------- projects
@@ -235,7 +241,10 @@ pub async fn project_remove(
     if !running.is_empty() && !force {
         return Err(CmdError::new(
             "PROJECT_HAS_RUNNING_SESSIONS",
-            format!("该项目有 {} 个终端仍在运行，确认后将一并关闭", running.len()),
+            format!(
+                "该项目有 {} 个终端仍在运行，确认后将一并关闭",
+                running.len()
+            ),
         ));
     }
     let path = {
@@ -297,9 +306,18 @@ pub async fn session_create(
     let session = Session {
         id: new_id(),
         project_id: project_id.clone(),
-        title: title.unwrap_or_else(|| format!("终端 {}", {
-            state.store.read().sessions.iter().filter(|s| s.project_id == project_id).count() + 1
-        })),
+        title: title.unwrap_or_else(|| {
+            format!("终端 {}", {
+                state
+                    .store
+                    .read()
+                    .sessions
+                    .iter()
+                    .filter(|s| s.project_id == project_id)
+                    .count()
+                    + 1
+            })
+        }),
         sort_order: next_sort_order(&state.store.read()),
         agent_kind: None,
         layout: LayoutNode::new_pane(pane.clone()),
@@ -390,6 +408,32 @@ pub async fn session_set_sync_input(
 
 // ---------------------------------------------------------------- layout
 
+fn commit_pane_split(
+    store: &mut Store,
+    session_id: &str,
+    pane_id: &str,
+    direction: SplitDirection,
+    new_pane: Pane,
+) -> CmdResult<Session> {
+    let Some(s) = store.sessions.iter_mut().find(|s| s.id == session_id) else {
+        return Err(CmdError::new("NOT_FOUND", "会话不存在"));
+    };
+    if !s.layout.split(pane_id, direction, new_pane.clone()) {
+        return Err(CmdError::new("INVARIANT", "无法在布局中分割该 Pane"));
+    }
+    if let Err(e) = s.layout.validate() {
+        return Err(CmdError::new("INVARIANT", e.to_string()));
+    }
+    // Focus moves to the new pane.
+    let pane_ids: Vec<String> = s.layout.panes().into_iter().map(|p| p.id.clone()).collect();
+    for id in pane_ids {
+        if let Some(pane) = s.layout.find_pane_mut(&id) {
+            pane.active = id == new_pane.id;
+        }
+    }
+    Ok(s.clone())
+}
+
 #[tauri::command]
 pub async fn pane_split(
     state: State<'_, Arc<AppState>>,
@@ -399,32 +443,36 @@ pub async fn pane_split(
 ) -> CmdResult<Session> {
     let (session_id, project_id, cwd) = {
         let store = state.store.read();
-        let Some(s) = store.sessions.iter().find(|s| s.layout.contains_pane(&pane_id)) else {
+        let Some(s) = store
+            .sessions
+            .iter()
+            .find(|s| s.layout.contains_pane(&pane_id))
+        else {
             return Err(CmdError::new("NOT_FOUND", "Pane 不存在"));
         };
-        let src = s.layout.find_pane(&pane_id).unwrap();
+        let Some(src) = s.layout.find_pane(&pane_id) else {
+            return Err(CmdError::new("NOT_FOUND", "Pane 不存在"));
+        };
         (s.id.clone(), s.project_id.clone(), src.cwd.clone())
     };
-    let project = state.store.read().projects.iter().find(|p| p.id == project_id).cloned();
+    let project = state
+        .store
+        .read()
+        .projects
+        .iter()
+        .find(|p| p.id == project_id)
+        .cloned();
     let profile = resolve_profile(&state, profile_id.as_deref(), project.as_ref()).cmd()?;
     let new_pane = Pane::new(cwd, profile);
     let session = {
         let mut store = state.store.write();
-        let s = store.sessions.iter_mut().find(|s| s.id == session_id).unwrap();
-        if !s.layout.split(&pane_id, direction, new_pane.clone()) {
-            return Err(CmdError::new("INVARIANT", "无法在布局中分割该 Pane"));
-        }
-        if let Err(e) = s.layout.validate() {
-            return Err(CmdError::new("INVARIANT", e.to_string()));
-        }
-        // Focus moves to the new pane.
-        let pane_ids: Vec<String> = s.layout.panes().into_iter().map(|p| p.id.clone()).collect();
-        for id in pane_ids {
-            if let Some(pane) = s.layout.find_pane_mut(&id) {
-                pane.active = id == new_pane.id;
-            }
-        }
-        s.clone()
+        commit_pane_split(
+            &mut store,
+            &session_id,
+            &pane_id,
+            direction,
+            new_pane.clone(),
+        )?
     };
     spawn_pane_process(&state, &project_id, &session_id, &new_pane);
     state.persist().cmd()?;
@@ -436,8 +484,29 @@ pub async fn pane_split(
     Ok(session)
 }
 
+fn commit_pane_close(store: &mut Store, session_id: &str, pane_id: &str) -> CmdResult<bool> {
+    let Some(session_idx) = store.sessions.iter().position(|s| s.id == session_id) else {
+        return Err(CmdError::new("NOT_FOUND", "会话不存在"));
+    };
+    if !store.sessions[session_idx].layout.contains_pane(pane_id) {
+        return Err(CmdError::new("NOT_FOUND", "Pane 不存在"));
+    }
+    if store.sessions[session_idx].layout.pane_count() == 1 {
+        store.sessions.remove(session_idx);
+        return Ok(true);
+    }
+    store.sessions[session_idx]
+        .layout
+        .remove_pane(pane_id)
+        .ok_or_else(|| CmdError::new("INVARIANT", "无法从布局中移除 Pane"))?;
+    Ok(false)
+}
+
 #[tauri::command]
-pub async fn pane_close(state: State<'_, Arc<AppState>>, pane_id: String) -> CmdResult<Option<String>> {
+pub async fn pane_close(
+    state: State<'_, Arc<AppState>>,
+    pane_id: String,
+) -> CmdResult<Option<String>> {
     // Returns Some(session_id) if the session still exists, None if closing
     // the pane removed the session.
     let session_id = {
@@ -451,21 +520,17 @@ pub async fn pane_close(state: State<'_, Arc<AppState>>, pane_id: String) -> Cmd
     let Some(session_id) = session_id else {
         return Err(CmdError::new("NOT_FOUND", "Pane 不存在"));
     };
-    state.pty().unregister(&pane_id);
     let removed_session = {
         let mut store = state.store.write();
-        let s = store.sessions.iter_mut().find(|s| s.id == session_id).unwrap();
-        s.layout.remove_pane(&pane_id);
-        if s.layout.pane_count() == 0 {
-            let pos = store.sessions.iter().position(|s| s.id == session_id).unwrap();
-            store.sessions.remove(pos);
-            true
-        } else {
-            false
-        }
+        commit_pane_close(&mut store, &session_id, &pane_id)?
     };
+    state.pty().unregister(&pane_id);
     state.persist().cmd()?;
-    Ok(if removed_session { None } else { Some(session_id) })
+    Ok(if removed_session {
+        None
+    } else {
+        Some(session_id)
+    })
 }
 
 /// Transactional cross-tab move: if the target tree refuses the pane, the
@@ -504,7 +569,11 @@ pub async fn pane_move_to_session(
     // 2. Adopt into the target; on validation failure roll back.
     let adopt_result = {
         let mut store = state.store.write();
-        match store.sessions.iter_mut().find(|s| s.id == target_session_id) {
+        match store
+            .sessions
+            .iter_mut()
+            .find(|s| s.id == target_session_id)
+        {
             Some(t) => {
                 let anchor = t.layout.panes().first().map(|p| p.id.clone());
                 Some(match anchor {
@@ -523,7 +592,11 @@ pub async fn pane_move_to_session(
         _ => {
             // Roll back: put the pane back into the source session.
             let mut store = state.store.write();
-            if let Some(src) = store.sessions.iter_mut().find(|s| s.id == source_session_id) {
+            if let Some(src) = store
+                .sessions
+                .iter_mut()
+                .find(|s| s.id == source_session_id)
+            {
                 let anchor = src.layout.panes().first().map(|p| p.id.clone());
                 if let Some(anchor) = anchor {
                     let _ = src.layout.adopt_pane(&anchor, detached);
@@ -532,7 +605,10 @@ pub async fn pane_move_to_session(
                     src.layout = LayoutNode::new_pane(detached);
                 }
             }
-            Err(CmdError::new("INVARIANT", "目标会话无法接受该 Pane，已保留在源会话"))
+            Err(CmdError::new(
+                "INVARIANT",
+                "目标会话无法接受该 Pane，已保留在源会话",
+            ))
         }
     }
 }
@@ -579,14 +655,17 @@ pub async fn template_save(
         fn to_template(node: &LayoutNode) -> crate::core::config::TemplateNode {
             match node {
                 LayoutNode::Pane { .. } => crate::core::config::TemplateNode::Slot,
-                LayoutNode::Split { direction, ratio, first, second } => {
-                    crate::core::config::TemplateNode::Split {
-                        direction: *direction,
-                        ratio: *ratio,
-                        first: Box::new(to_template(first)),
-                        second: Box::new(to_template(second)),
-                    }
-                }
+                LayoutNode::Split {
+                    direction,
+                    ratio,
+                    first,
+                    second,
+                } => crate::core::config::TemplateNode::Split {
+                    direction: *direction,
+                    ratio: *ratio,
+                    first: Box::new(to_template(first)),
+                    second: Box::new(to_template(second)),
+                },
             }
         }
         LayoutTemplate {
@@ -598,7 +677,10 @@ pub async fn template_save(
     };
     {
         let mut store = state.store.write();
-        store.config.layout_templates.retain(|t| t.name != template.name);
+        store
+            .config
+            .layout_templates
+            .retain(|t| t.name != template.name);
         store.config.layout_templates.push(template.clone());
     }
     state.persist().cmd()?;
@@ -629,13 +711,19 @@ pub async fn template_apply(
             return Err(CmdError::new("NOT_FOUND", "会话不存在"));
         };
         let panes: Vec<Pane> = s.layout.panes().into_iter().cloned().collect();
-        let project = store.projects.iter().find(|p| p.id == s.project_id).cloned();
+        let project = store
+            .projects
+            .iter()
+            .find(|p| p.id == s.project_id)
+            .cloned();
         (s.project_id.clone(), panes, project.map(|p| p.path))
     };
 
     let profile = resolve_profile(&state, None, None).cmd()?;
     let mut reused: Vec<Pane> = existing_panes.clone();
-    let default_cwd = reused.first().map(|p| p.cwd.clone())
+    let default_cwd = reused
+        .first()
+        .map(|p| p.cwd.clone())
         .or(cwd_source)
         .unwrap_or_else(|| ".".into());
 
@@ -654,7 +742,12 @@ pub async fn template_apply(
                 };
                 (LayoutNode::new_pane(pane.clone()), vec![pane])
             }
-            crate::core::config::TemplateNode::Split { direction, ratio, first, second } => {
+            crate::core::config::TemplateNode::Split {
+                direction,
+                ratio,
+                first,
+                second,
+            } => {
                 let (f, mut pf) = build(first, reused, profile, default_cwd);
                 let (s, ps) = build(second, reused, profile, default_cwd);
                 pf.extend(ps);
@@ -715,7 +808,13 @@ pub async fn workspace_restore(state: State<'_, Arc<AppState>>) -> CmdResult<usi
     let mut restored = 0usize;
     for session in sessions {
         // Skip sessions already live (e.g. hot reload).
-        if session.layout.panes().iter().all(|p| state.pty().is_alive(&p.id)) && !session.layout.panes().is_empty() {
+        if session
+            .layout
+            .panes()
+            .iter()
+            .all(|p| state.pty().is_alive(&p.id))
+            && !session.layout.panes().is_empty()
+        {
             continue;
         }
         let mut any_ok = false;
@@ -765,4 +864,125 @@ pub async fn recovery_clean_start(state: State<'_, Arc<AppState>>) -> CmdResult<
     state.store.write().sessions.clear();
     state.persist().cmd()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::models::ProfileSource;
+
+    fn pane(id: &str) -> Pane {
+        let profile = ShellProfile {
+            id: "profile-1".into(),
+            name: "Test shell".into(),
+            program: "cmd.exe".into(),
+            args: Vec::new(),
+            icon: None,
+            env: Default::default(),
+            source: ProfileSource::Detected,
+        };
+        let mut pane = Pane::new("C:\\workspace".into(), profile);
+        pane.id = id.into();
+        pane
+    }
+
+    fn store_with_session() -> Store {
+        let mut store = Store::default();
+        store.sessions.push(Session {
+            id: "session-1".into(),
+            project_id: "project-1".into(),
+            title: "Session".into(),
+            sort_order: 0,
+            agent_kind: None,
+            layout: LayoutNode::new_pane(pane("pane-1")),
+            sync_input: false,
+            created_at: "2026-08-03T00:00:00Z".into(),
+        });
+        store
+    }
+
+    #[test]
+    fn pane_split_commit_returns_not_found_if_session_disappeared_after_lookup() {
+        let mut store = store_with_session();
+        store.sessions.clear();
+
+        let err = commit_pane_split(
+            &mut store,
+            "session-1",
+            "pane-1",
+            SplitDirection::Row,
+            pane("pane-2"),
+        )
+        .expect_err("a concurrently removed session must return an error");
+
+        assert_eq!(err.code, "NOT_FOUND");
+        assert_eq!(err.message, "会话不存在");
+    }
+
+    #[test]
+    fn pane_close_commit_returns_not_found_if_session_disappeared_after_lookup() {
+        let mut store = store_with_session();
+        store.sessions.clear();
+
+        let err = commit_pane_close(&mut store, "session-1", "pane-1")
+            .expect_err("a concurrently removed session must return an error");
+
+        assert_eq!(err.code, "NOT_FOUND");
+        assert_eq!(err.message, "会话不存在");
+    }
+
+    #[test]
+    fn pane_close_commit_removes_session_when_closing_its_only_pane() {
+        let mut store = store_with_session();
+
+        let removed_session = commit_pane_close(&mut store, "session-1", "pane-1")
+            .expect("closing the only pane should succeed");
+
+        assert!(removed_session);
+        assert!(store.sessions.is_empty());
+    }
+
+    #[test]
+    fn pane_close_commit_rejects_stale_source_after_pane_moves() {
+        let mut store = store_with_session();
+        assert!(store.sessions[0].layout.split(
+            "pane-1",
+            SplitDirection::Row,
+            pane("source-survivor"),
+        ));
+        store.sessions.push(Session {
+            id: "session-2".into(),
+            project_id: "project-1".into(),
+            title: "Target session".into(),
+            sort_order: 1,
+            agent_kind: None,
+            layout: LayoutNode::new_pane(pane("target-anchor")),
+            sync_input: false,
+            created_at: "2026-08-03T00:00:00Z".into(),
+        });
+
+        let stale_session_id = store.sessions[0].id.clone();
+        let moved = store.sessions[0]
+            .layout
+            .detach_pane("pane-1")
+            .expect("the move should detach the requested pane");
+        assert!(store.sessions[1].layout.adopt_pane("target-anchor", moved));
+
+        let err = commit_pane_close(&mut store, &stale_session_id, "pane-1")
+            .expect_err("a close must not commit against the pane's stale source session");
+
+        assert_eq!(err.code, "NOT_FOUND");
+        let source = store
+            .sessions
+            .iter()
+            .find(|session| session.id == "session-1")
+            .expect("the stale source session must remain");
+        assert!(source.layout.contains_pane("source-survivor"));
+        let target = store
+            .sessions
+            .iter()
+            .find(|session| session.id == "session-2")
+            .expect("the target session must remain");
+        assert!(target.layout.contains_pane("pane-1"));
+    }
 }

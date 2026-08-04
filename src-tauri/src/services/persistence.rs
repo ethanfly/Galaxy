@@ -8,14 +8,17 @@
 //! Concurrent `save` calls are serialized with a mutex and write to unique
 //! temp names so two in-flight persists cannot delete each other's temp file
 //! (which previously surfaced as `AppError::Io` / os error 2 on Windows).
+use parking_lot::Mutex;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use parking_lot::Mutex;
 use time::OffsetDateTime;
 
+use super::paths::DataPaths;
 use crate::core::models::{Store, STORE_SCHEMA_VERSION};
 use crate::error::AppError;
-use super::paths::DataPaths;
+
+static RUN_STATE_WRITE_LOCK: Mutex<()> = Mutex::new(());
+static RUN_STATE_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 pub struct Persistence {
     paths: DataPaths,
@@ -63,9 +66,10 @@ impl Persistence {
                     Err(_) => {
                         if self.paths.store.exists() {
                             let ts = timestamp();
-                            let moved = self.paths.store.with_file_name(format!(
-                                "store.json.corrupt-{ts}"
-                            ));
+                            let moved = self
+                                .paths
+                                .store
+                                .with_file_name(format!("store.json.corrupt-{ts}"));
                             let _ = std::fs::rename(&self.paths.store, &moved);
                             tracing::warn!("存储文件损坏且备份不可用，已改名保留: {primary_err}");
                         }
@@ -77,9 +81,8 @@ impl Persistence {
     }
 
     fn try_load_file(&self, path: &Path) -> Result<Store, AppError> {
-        let raw = std::fs::read_to_string(path).map_err(|e| {
-            AppError::Persistence(format!("读取 {} 失败: {e}", path.display()))
-        })?;
+        let raw = std::fs::read_to_string(path)
+            .map_err(|e| AppError::Persistence(format!("读取 {} 失败: {e}", path.display())))?;
         let mut value: serde_json::Value = serde_json::from_str(&raw)
             .map_err(|e| AppError::Persistence(format!("解析 {} 失败: {e}", path.display())))?;
         // Pre-flatten era stores used a double-nested pane shape from serde's
@@ -118,6 +121,14 @@ impl Persistence {
     /// Serialized so concurrent Tauri commands / window-state saves cannot
     /// race on a shared temp path (Windows os error 2).
     pub fn save(&self, store: &Store) -> Result<(), AppError> {
+        self.save_with_commit(store, atomic_replace_file)
+    }
+
+    fn save_with_commit(
+        &self,
+        store: &Store,
+        commit: fn(&Path, &Path) -> std::io::Result<()>,
+    ) -> Result<(), AppError> {
         let _guard = self.write_lock.lock();
         // Recreate data dirs if the user (or cleaner) removed them mid-session.
         self.paths.ensure_dirs()?;
@@ -131,42 +142,28 @@ impl Persistence {
 
         let bytes = serde_json::to_vec_pretty(store)
             .map_err(|e| AppError::Persistence(format!("序列化存储失败: {e}")))?;
-        std::fs::write(&tmp, &bytes)
-            .map_err(|e| AppError::Persistence(format!("写入临时存储失败: {e}")))?;
-        // flush + fsync for durability, then replace
-        {
+        let result = (|| -> Result<(), AppError> {
+            std::fs::write(&tmp, &bytes)
+                .map_err(|e| AppError::Persistence(format!("写入临时存储失败: {e}")))?;
             let f = std::fs::OpenOptions::new()
                 .read(true)
                 .write(true)
                 .open(&tmp)
                 .map_err(|e| AppError::Persistence(format!("打开临时存储失败: {e}")))?;
-            f.sync_all().ok();
-        }
+            f.sync_all()
+                .map_err(|e| AppError::Persistence(format!("同步临时存储失败: {e}")))?;
+            drop(f);
 
-        // Windows cannot rename over an existing file. Remove destination
-        // first, then rename; on failure try to leave a recoverable state.
-        if self.paths.store.exists() {
-            std::fs::remove_file(&self.paths.store)
-                .map_err(|e| AppError::Persistence(format!("替换主存储失败: {e}")))?;
+            commit(&tmp, &self.paths.store)
+                .map_err(|e| AppError::Persistence(format!("提交主存储失败: {e}")))?;
+            // Keep last-good backup after the main commit succeeds.
+            let _ = std::fs::copy(&self.paths.store, self.paths.backups.join("store.json"));
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&tmp);
         }
-        if let Err(e) = std::fs::rename(&tmp, &self.paths.store) {
-            // Best-effort: if rename failed but tmp still holds the new data,
-            // copy as a fallback so the user does not lose the write.
-            match std::fs::copy(&tmp, &self.paths.store) {
-                Ok(_) => {
-                    let _ = std::fs::remove_file(&tmp);
-                }
-                Err(copy_err) => {
-                    let _ = std::fs::remove_file(&tmp);
-                    return Err(AppError::Persistence(format!(
-                        "移动主存储失败: {e}（回退复制也失败: {copy_err}）"
-                    )));
-                }
-            }
-        }
-        // keep last-good backup
-        let _ = std::fs::copy(&self.paths.store, self.paths.backups.join("store.json"));
-        Ok(())
+        result
     }
 
     pub fn backup_path(&self) -> PathBuf {
@@ -220,8 +217,8 @@ fn migrate_v1_to_v2(mut store: Store) -> Store {
 fn migrate_v2_to_v3(mut store: Store) -> Store {
     // v2 → v3: config gained agent_notifications / statusbar components.
     if store.config.statusbar_components.is_empty() {
-        store.config.statusbar_components = crate::core::config::AppConfig::default()
-            .statusbar_components;
+        store.config.statusbar_components =
+            crate::core::config::AppConfig::default().statusbar_components;
     }
     store.schema_version = 3;
     store
@@ -238,16 +235,93 @@ pub struct RunState {
 }
 
 pub fn read_run_state(path: &Path) -> Option<RunState> {
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str::<RunState>(&s).ok())
+    match std::fs::read_to_string(path) {
+        Ok(raw) => Some(serde_json::from_str::<RunState>(&raw).unwrap_or(RunState {
+            clean_shutdown: false,
+            pid: 0,
+        })),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => Some(RunState {
+            clean_shutdown: false,
+            pid: 0,
+        }),
+    }
 }
 
-pub fn write_run_state(path: &Path, clean: bool) {
-    let state = RunState { clean_shutdown: clean, pid: std::process::id() };
-    if let Ok(json) = serde_json::to_string(&state) {
-        let _ = std::fs::write(path, json);
+#[cfg(windows)]
+fn atomic_replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    fn wide_path(path: &Path) -> std::io::Result<Vec<u16>> {
+        let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+        if wide.contains(&0) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path contains an interior NUL",
+            ));
+        }
+        wide.push(0);
+        Ok(wide)
     }
+
+    let source = wide_path(source)?;
+    let destination = wide_path(destination)?;
+    // Both UTF-16 buffers are NUL-terminated and remain alive for the call.
+    let moved = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn atomic_replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::rename(source, destination)
+}
+
+pub fn write_run_state(path: &Path, clean: bool) -> Result<(), AppError> {
+    let _guard = RUN_STATE_WRITE_LOCK.lock();
+    let state = RunState {
+        clean_shutdown: clean,
+        pid: std::process::id(),
+    };
+    let bytes = serde_json::to_vec(&state)
+        .map_err(|error| AppError::Persistence(format!("序列化运行状态失败: {error}")))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::Persistence("运行状态路径缺少父目录".into()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|error| AppError::Persistence(format!("创建运行状态目录失败: {error}")))?;
+
+    let seq = RUN_STATE_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = path.with_file_name(format!(".run_state.{}.{}.tmp", std::process::id(), seq));
+    let result = (|| -> Result<(), AppError> {
+        std::fs::write(&tmp, bytes)
+            .map_err(|error| AppError::Persistence(format!("写入临时运行状态失败: {error}")))?;
+        std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&tmp)
+            .and_then(|file| file.sync_all())
+            .map_err(|error| AppError::Persistence(format!("同步运行状态失败: {error}")))?;
+
+        atomic_replace_file(&tmp, path)
+            .map_err(|error| AppError::Persistence(format!("提交运行状态失败: {error}")))
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -307,7 +381,11 @@ mod tests {
         let moved = std::fs::read_dir(&paths.root)
             .unwrap()
             .filter_map(|e| e.ok())
-            .any(|e| e.file_name().to_string_lossy().starts_with("store.json.corrupt-"));
+            .any(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("store.json.corrupt-")
+            });
         assert!(moved);
     }
 
@@ -325,6 +403,136 @@ mod tests {
         let (store, _) = p.load().unwrap();
         assert_eq!(store.schema_version, STORE_SCHEMA_VERSION);
         assert!(!store.config.shortcuts.is_empty(), "defaults merged");
+    }
+
+    #[test]
+    fn malformed_run_state_is_treated_as_an_unclean_shutdown() {
+        let (tmp, _) = tmp_paths();
+        let path = tmp.path().join("run_state.json");
+        std::fs::write(&path, "{truncated").unwrap();
+
+        let state = read_run_state(&path).expect("a malformed marker must be conservative");
+        assert!(!state.clean_shutdown);
+    }
+
+    #[test]
+    fn run_state_write_failures_are_reported() {
+        let (tmp, _) = tmp_paths();
+        let path = tmp.path().join("run_state.json");
+        std::fs::create_dir(&path).unwrap();
+
+        write_run_state(&path, false).expect_err("a directory cannot be replaced by the marker");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn atomic_replace_overwrites_existing_run_state() {
+        let (tmp, _) = tmp_paths();
+        let source = tmp.path().join("run_state.tmp");
+        let destination = tmp.path().join("run_state.json");
+        std::fs::write(&source, b"new marker").unwrap();
+        std::fs::write(&destination, b"old marker").unwrap();
+
+        atomic_replace_file(&source, &destination).expect("atomic replacement should succeed");
+
+        assert_eq!(std::fs::read(&destination).unwrap(), b"new marker");
+        assert!(
+            !source.exists(),
+            "a successful move consumes the temporary file"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn failed_atomic_replace_preserves_existing_run_state() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let (tmp, _) = tmp_paths();
+        let source = tmp.path().join("run_state.tmp");
+        let destination = tmp.path().join("run_state.json");
+        std::fs::write(&source, b"new marker").unwrap();
+        std::fs::write(&destination, b"old marker").unwrap();
+
+        // Excluding FILE_SHARE_DELETE makes moving this source fail deterministically.
+        let _locked_source = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x1 | 0x2)
+            .open(&source)
+            .unwrap();
+
+        atomic_replace_file(&source, &destination)
+            .expect_err("a locked source cannot be atomically moved");
+
+        assert_eq!(std::fs::read(&destination).unwrap(), b"old marker");
+    }
+
+    fn store_with_project(id: &str) -> Store {
+        let mut store = Store::default();
+        store.projects.push(crate::core::models::Project {
+            id: id.into(),
+            name: id.into(),
+            path: format!("C:\\{id}"),
+            color: "#694dc9".into(),
+            default_profile_id: None,
+            created_at: crate::core::models::now_rfc3339(),
+            last_accessed_at: crate::core::models::now_rfc3339(),
+        });
+        store
+    }
+
+    fn reject_store_commit(source: &Path, destination: &Path) -> std::io::Result<()> {
+        assert!(
+            source.exists(),
+            "the complete temporary store must exist before commit"
+        );
+        assert!(
+            destination.exists(),
+            "the old main store must exist until commit"
+        );
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "injected commit failure",
+        ))
+    }
+
+    #[test]
+    fn failed_store_commit_preserves_existing_main() {
+        let (_tmp, paths) = tmp_paths();
+        let persistence = Persistence::new(paths.clone()).unwrap();
+        persistence.save(&store_with_project("old")).unwrap();
+
+        persistence
+            .save_with_commit(&store_with_project("new"), reject_store_commit)
+            .expect_err("the injected commit must fail");
+
+        let raw = std::fs::read(&paths.store).expect("the old main store must remain readable");
+        let persisted: Store = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(persisted.projects[0].id, "old");
+    }
+
+    #[test]
+    fn failed_store_commit_cleans_temporary_file() {
+        let (_tmp, paths) = tmp_paths();
+        let persistence = Persistence::new(paths.clone()).unwrap();
+        persistence.save(&store_with_project("old")).unwrap();
+
+        persistence
+            .save_with_commit(&store_with_project("new"), reject_store_commit)
+            .expect_err("the injected commit must fail");
+
+        let leftovers: Vec<_> = std::fs::read_dir(&paths.root)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name.starts_with("store.") && name.ends_with(".tmp")
+            })
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "temporary files remain: {leftovers:?}"
+        );
     }
 
     #[test]
@@ -354,18 +562,23 @@ mod tests {
         for h in handles {
             h.join().unwrap();
         }
-        assert!(paths.store.exists(), "store.json must exist after concurrent saves");
+        assert!(
+            paths.store.exists(),
+            "store.json must exist after concurrent saves"
+        );
         let (loaded, degraded) = p.load().unwrap();
         assert!(!degraded);
-        assert_eq!(loaded.projects.len(), 1, "last writer wins with a valid store");
+        assert_eq!(
+            loaded.projects.len(),
+            1,
+            "last writer wins with a valid store"
+        );
         // No leftover shared tmp name (unique temps are cleaned on success).
         let leftovers: Vec<_> = std::fs::read_dir(&paths.root)
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .starts_with("store.")
+                e.file_name().to_string_lossy().starts_with("store.")
                     && e.file_name().to_string_lossy().ends_with(".tmp")
             })
             .collect();

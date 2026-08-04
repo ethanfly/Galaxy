@@ -46,14 +46,37 @@ export function TitleBar() {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     let un: (() => void) | undefined;
-    void appWindow.isMaximized().then(setMaximized);
+    const refreshMaximized = () => {
+      void appWindow.isMaximized().then(
+        (value) => {
+          if (!cancelled) setMaximized(value);
+        },
+        (error) => {
+          console.error("Failed to query maximized window state", error);
+        },
+      );
+    };
+    refreshMaximized();
     void appWindow
-      .onResized(() => {
-        void appWindow.isMaximized().then(setMaximized);
-      })
-      .then((u) => (un = u));
-    return () => un?.();
+      .onResized(refreshMaximized)
+      .then(
+        (u) => {
+          if (cancelled) {
+            u();
+            return;
+          }
+          un = u;
+        },
+        (error) => {
+          console.error("Failed to register window resize listener", error);
+        },
+      );
+    return () => {
+      cancelled = true;
+      un?.();
+    };
   }, []);
 
   const onDoubleClick = useCallback(() => {

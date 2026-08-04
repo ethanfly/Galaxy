@@ -2,8 +2,8 @@
 //! batching aggregator that merges same-window PTY output into one IPC
 //! event per scheduling window (spec §3.2). Keyboard input, resize and
 //! signals bypass batching and are written directly.
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -73,18 +73,13 @@ pub trait PtyEventSink: Send + Sync {
     fn exit(&self, pane_id: &str, code: Option<i32>);
     fn title(&self, pane_id: &str, session_id: &str, title: &str);
     fn block_completed(&self, block: &crate::core::models::CommandBlock);
-    fn agent_status(
-        &self,
-        pane_id: &str,
-        session_id: &str,
-        kind: AgentKind,
-        status: AgentStatus,
-    );
+    fn agent_status(&self, pane_id: &str, session_id: &str, kind: AgentKind, status: AgentStatus);
     fn trigger_fired(&self, fire: &TriggerFire);
     fn pty_error(&self, pane_id: &str, message: &str);
 }
 
 struct PaneCtx {
+    generation: u64,
     session_id: String,
     project_id: String,
     agent_kind: Option<AgentKind>,
@@ -101,15 +96,48 @@ struct PaneCtx {
 }
 
 struct ProcessEntry {
-    /// Arc so writers can drop the processes-map lock before blocking I/O.
-    process: Arc<Mutex<Box<dyn PtyProcess>>>,
-    _reader: JoinHandle<()>,
+    generation: u64,
+    /// Process methods synchronize their own independent resources, so a
+    /// blocked writer never prevents the child handle from being terminated.
+    process: Arc<dyn PtyProcess>,
 }
 
 enum PtyMsg {
-    Output { pane_id: String, data: String },
-    Eof { pane_id: String },
-    Inject { pane_id: String, data: String },
+    Output {
+        pane_id: String,
+        generation: u64,
+        data: String,
+    },
+    ReaderEof {
+        pane_id: String,
+        generation: u64,
+    },
+    ProcessExited {
+        pane_id: String,
+        generation: u64,
+        exit_code: Option<i32>,
+    },
+    Inject {
+        pane_id: String,
+        generation: u64,
+        data: String,
+    },
+}
+
+enum PaneSideEffect {
+    Title {
+        pane_id: String,
+        session_id: String,
+        title: String,
+    },
+    Block(crate::core::models::CommandBlock),
+    Agent {
+        pane_id: String,
+        session_id: String,
+        kind: AgentKind,
+        status: AgentStatus,
+    },
+    Trigger(TriggerFire),
 }
 
 pub struct PtyManager {
@@ -118,16 +146,14 @@ pub struct PtyManager {
     panes: Arc<Mutex<HashMap<String, PaneCtx>>>,
     processes: Arc<Mutex<HashMap<String, ProcessEntry>>>,
     tx: std::sync::mpsc::Sender<PtyMsg>,
+    next_generation: AtomicU64,
     shutdown: Arc<AtomicBool>,
     triggers: Arc<Mutex<Vec<(Trigger, regex::Regex)>>>,
     _aggregator: JoinHandle<()>,
 }
 
 impl PtyManager {
-    pub fn new(
-        backend: Arc<dyn PtyBackend>,
-        sink: Arc<dyn PtyEventSink>,
-    ) -> Self {
+    pub fn new(backend: Arc<dyn PtyBackend>, sink: Arc<dyn PtyEventSink>) -> Self {
         let (tx, rx) = std::sync::mpsc::channel::<PtyMsg>();
         let shutdown = Arc::new(AtomicBool::new(false));
         let panes: Arc<Mutex<HashMap<String, PaneCtx>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -143,9 +169,7 @@ impl PtyManager {
             let triggers = triggers.clone();
             std::thread::Builder::new()
                 .name("pty-aggregator".into())
-                .spawn(move || {
-                    Self::aggregate_loop(rx, sink, panes, processes, triggers, shutdown)
-                })
+                .spawn(move || Self::aggregate_loop(rx, sink, panes, processes, triggers, shutdown))
                 .expect("spawn aggregator")
         };
 
@@ -155,6 +179,7 @@ impl PtyManager {
             panes,
             processes,
             tx,
+            next_generation: AtomicU64::new(1),
             shutdown,
             triggers,
             _aggregator: aggregator,
@@ -190,12 +215,15 @@ impl PtyManager {
         agent_kind: Option<AgentKind>,
         resume_command: Option<String>,
     ) -> Result<(), AppError> {
-        let mut process = self.backend.spawn(spec)?;
+        let process = self.backend.spawn(spec)?;
         let mut reader = process.take_reader()?;
+        let process: Arc<dyn PtyProcess> = process.into();
+        let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
 
         self.panes.lock().insert(
             pane_id.to_string(),
             PaneCtx {
+                generation,
                 session_id: session_id.to_string(),
                 project_id: project_id.to_string(),
                 agent_kind,
@@ -211,9 +239,22 @@ impl PtyManager {
             },
         );
 
+        // Publish the process before either observer can report its exit. A
+        // short-lived command must not race its EOF ahead of this entry.
+        let replaced = self.processes.lock().insert(
+            pane_id.to_string(),
+            ProcessEntry {
+                generation,
+                process: process.clone(),
+            },
+        );
+        if let Some(replaced) = replaced {
+            Self::request_process_kill(replaced.process);
+        }
+
         let tx = self.tx.clone();
         let pane_for_thread = pane_id.to_string();
-        let reader_handle = std::thread::Builder::new()
+        let reader_result = std::thread::Builder::new()
             .name(format!("pty-read-{}", &pane_id[..pane_id.len().min(8)]))
             .spawn(move || {
                 let mut buf = [0u8; 64 * 1024];
@@ -227,10 +268,14 @@ impl PtyManager {
                             if !tail.is_empty() {
                                 let _ = tx.send(PtyMsg::Output {
                                     pane_id: pane_for_thread.clone(),
+                                    generation,
                                     data: tail,
                                 });
                             }
-                            let _ = tx.send(PtyMsg::Eof { pane_id: pane_for_thread.clone() });
+                            let _ = tx.send(PtyMsg::ReaderEof {
+                                pane_id: pane_for_thread.clone(),
+                                generation,
+                            });
                             break;
                         }
                         Ok(n) => {
@@ -241,6 +286,7 @@ impl PtyManager {
                             if tx
                                 .send(PtyMsg::Output {
                                     pane_id: pane_for_thread.clone(),
+                                    generation,
                                     data: text,
                                 })
                                 .is_err()
@@ -254,24 +300,78 @@ impl PtyManager {
                             if !tail.is_empty() {
                                 let _ = tx.send(PtyMsg::Output {
                                     pane_id: pane_for_thread.clone(),
+                                    generation,
                                     data: tail,
                                 });
                             }
-                            let _ = tx.send(PtyMsg::Eof { pane_id: pane_for_thread.clone() });
+                            let _ = tx.send(PtyMsg::ReaderEof {
+                                pane_id: pane_for_thread.clone(),
+                                generation,
+                            });
                             break;
                         }
                     }
                 }
-            })
-            .map_err(|e| AppError::Pty(format!("启动读取线程失败: {e}")))?;
+            });
+        if let Err(error) = reader_result {
+            let entry = Self::take_process_entry(&self.processes, pane_id, generation);
+            Self::remove_pane_generation(&self.panes, pane_id, generation);
+            if let Some(entry) = entry {
+                Self::request_process_kill(entry.process);
+            }
+            return Err(AppError::Pty(format!("启动读取线程失败: {error}")));
+        }
 
-        self.processes.lock().insert(
-            pane_id.to_string(),
-            ProcessEntry {
-                process: Arc::new(Mutex::new(process)),
-                _reader: reader_handle,
-            },
-        );
+        // ConPTY can keep its output pipe open while ProcessEntry owns the
+        // master handle. Poll the child independently instead of treating
+        // reader EOF as the only lifecycle signal.
+        let tx = self.tx.clone();
+        let pane_for_waiter = pane_id.to_string();
+        let process_for_waiter = Arc::downgrade(&process);
+        let shutdown = self.shutdown.clone();
+        let waiter_result = std::thread::Builder::new()
+            .name(format!("pty-wait-{}", &pane_id[..pane_id.len().min(8)]))
+            .spawn(move || {
+                while !shutdown.load(Ordering::SeqCst) {
+                    let Some(process) = process_for_waiter.upgrade() else {
+                        break;
+                    };
+                    let poll = process.try_wait();
+                    drop(process);
+                    match poll {
+                        Ok(Some(exit_code)) => {
+                            let _ = tx.send(PtyMsg::ProcessExited {
+                                pane_id: pane_for_waiter.clone(),
+                                generation,
+                                exit_code: Some(exit_code),
+                            });
+                            break;
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                pane = %pane_for_waiter,
+                                "PTY exit polling failed: {error}"
+                            );
+                            let _ = tx.send(PtyMsg::ProcessExited {
+                                pane_id: pane_for_waiter.clone(),
+                                generation,
+                                exit_code: None,
+                            });
+                            break;
+                        }
+                        _ => {}
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            });
+        if let Err(error) = waiter_result {
+            let entry = Self::take_process_entry(&self.processes, pane_id, generation);
+            Self::remove_pane_generation(&self.panes, pane_id, generation);
+            if let Some(entry) = entry {
+                Self::request_process_kill(entry.process);
+            }
+            return Err(AppError::Pty(format!("启动进程监测线程失败: {error}")));
+        }
 
         // Resume command injection: after the PTY shows its first output (or a
         // short grace period), type the adapter-generated command.
@@ -280,7 +380,11 @@ impl PtyManager {
             let pane = pane_id.to_string();
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(900));
-                let _ = tx.send(PtyMsg::Inject { pane_id: pane, data: format!("{cmd}\r") });
+                let _ = tx.send(PtyMsg::Inject {
+                    pane_id: pane,
+                    generation,
+                    data: format!("{cmd}\r"),
+                });
             });
         }
         Ok(())
@@ -299,19 +403,11 @@ impl PtyManager {
                 .map(|e| e.process.clone())
                 .ok_or_else(|| AppError::Pty("pane 对应的终端进程不存在".into()))?
         };
-        proc.lock().write(data.as_bytes())?;
+        proc.write(data.as_bytes())?;
 
         // 2) Update command-line tracking; collect side effects without holding
         //    panes across sink callbacks (those may lock store / persist).
-        enum Side {
-            Agent {
-                kind: AgentKind,
-                session_id: String,
-                status: AgentStatus,
-            },
-            Block(crate::core::models::CommandBlock),
-        }
-        let mut sides: Vec<Side> = Vec::new();
+        let mut sides: Vec<PaneSideEffect> = Vec::new();
         {
             let mut panes = self.panes.lock();
             let Some(ctx) = panes.get_mut(pane_id) else {
@@ -324,7 +420,8 @@ impl PtyManager {
                 if let Some(kind) = super::tracker::detect_agent_kind(&line) {
                     if ctx.agent_kind != Some(kind) {
                         ctx.agent_kind = Some(kind);
-                        sides.push(Side::Agent {
+                        sides.push(PaneSideEffect::Agent {
+                            pane_id: pane_id.to_string(),
                             kind,
                             session_id: ctx.session_id.clone(),
                             status: ctx.last_status,
@@ -336,7 +433,7 @@ impl PtyManager {
                 } else {
                     if let Some((cmd, out, code)) = ctx.tracker.close_block(None) {
                         if !out.is_empty() || !cmd.is_empty() {
-                            sides.push(Side::Block(make_block(
+                            sides.push(PaneSideEffect::Block(make_block(
                                 &ctx.project_id,
                                 &ctx.session_id,
                                 pane_id,
@@ -354,16 +451,7 @@ impl PtyManager {
                 ctx.tracker.touch();
             }
         }
-        for side in sides {
-            match side {
-                Side::Agent {
-                    kind,
-                    session_id,
-                    status,
-                } => self.sink.agent_status(pane_id, &session_id, kind, status),
-                Side::Block(block) => self.sink.block_completed(&block),
-            }
-        }
+        Self::dispatch_side_effects(&self.sink, sides);
         Ok(())
     }
 
@@ -373,7 +461,7 @@ impl PtyManager {
             processes.get(pane_id).map(|e| e.process.clone())
         };
         if let Some(proc) = proc {
-            proc.lock().resize(cols, rows)?;
+            proc.resize(cols, rows)?;
         }
         Ok(())
     }
@@ -381,8 +469,7 @@ impl PtyManager {
     pub fn kill(&self, pane_id: &str) -> Result<(), AppError> {
         let entry = self.processes.lock().remove(pane_id);
         if let Some(entry) = entry {
-            let mut proc = entry.process.lock();
-            let _ = proc.kill();
+            Self::request_process_kill(entry.process);
         }
         Ok(())
     }
@@ -395,7 +482,12 @@ impl PtyManager {
     pub fn replay(&self, pane_id: &str, after_seq: u64) -> ReplayDto {
         let panes = self.panes.lock();
         let Some(ctx) = panes.get(pane_id) else {
-            return ReplayDto { pane_id: pane_id.into(), truncated: false, from_seq: None, chunks: vec![] };
+            return ReplayDto {
+                pane_id: pane_id.into(),
+                truncated: false,
+                from_seq: None,
+                chunks: vec![],
+            };
         };
         match ctx.ring.replay(after_seq) {
             Replay::Chunks(chunks) => ReplayDto {
@@ -416,7 +508,11 @@ impl PtyManager {
     fn to_dto(pane_id: &str, chunks: Vec<RingChunk>) -> Vec<PaneChunk> {
         chunks
             .into_iter()
-            .map(|c| PaneChunk { pane_id: pane_id.to_string(), seq: c.seq, data: c.data })
+            .map(|c| PaneChunk {
+                pane_id: pane_id.to_string(),
+                seq: c.seq,
+                data: c.data,
+            })
             .collect()
     }
 
@@ -440,7 +536,10 @@ impl PtyManager {
                 let sid = ctx.session_id.clone();
                 ctx.last_status = AgentStatus::Done;
                 drop(panes);
-                self.sink.agent_status(pane_id, &sid, kind, AgentStatus::Done);
+                Self::contain_aggregator_panic("agent exit callback", || {
+                    self.sink
+                        .agent_status(pane_id, &sid, kind, AgentStatus::Done);
+                });
             }
         }
     }
@@ -453,11 +552,15 @@ impl PtyManager {
         triggers: Arc<Mutex<Vec<(Trigger, regex::Regex)>>>,
         shutdown: Arc<AtomicBool>,
     ) {
+        let mut pending_exits: HashMap<(String, u64), Option<i32>> = HashMap::new();
+        let mut reader_eofs: HashSet<(String, u64)> = HashSet::new();
         while !shutdown.load(Ordering::SeqCst) {
             let first = match rx.recv_timeout(HEURISTIC_IDLE_FLUSH) {
                 Ok(m) => m,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    Self::flush_idle_heuristic_blocks(&sink, &panes);
+                    Self::contain_aggregator_panic("idle block flush", || {
+                        Self::flush_idle_heuristic_blocks(&sink, &panes);
+                    });
                     continue;
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
@@ -481,8 +584,24 @@ impl PtyManager {
                     }
                 }
             }
-            Self::process_window(&msgs, &sink, &panes, &processes, &triggers);
-            Self::flush_idle_heuristic_blocks(&sink, &panes);
+            Self::process_window(
+                &msgs,
+                &sink,
+                &panes,
+                &processes,
+                &triggers,
+                &mut pending_exits,
+                &mut reader_eofs,
+            );
+            Self::contain_aggregator_panic("idle block flush", || {
+                Self::flush_idle_heuristic_blocks(&sink, &panes);
+            });
+        }
+    }
+
+    fn contain_aggregator_panic(label: &'static str, action: impl FnOnce()) {
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(action)).is_err() {
+            tracing::error!(operation = label, "PTY aggregator recovered from a panic");
         }
     }
 
@@ -503,20 +622,16 @@ impl PtyManager {
                     if out.is_empty() && cmd.is_empty() {
                         continue;
                     }
-                    let block = make_block(
-                        &ctx.project_id,
-                        &ctx.session_id,
-                        pane_id,
-                        cmd,
-                        out,
-                        code,
-                    );
+                    let block =
+                        make_block(&ctx.project_id, &ctx.session_id, pane_id, cmd, out, code);
                     completed.push((pane_id.clone(), block));
                 }
             }
         }
         for (_pane_id, block) in completed {
-            sink.block_completed(&block);
+            Self::contain_aggregator_panic("idle block callback", || {
+                sink.block_completed(&block);
+            });
         }
     }
 
@@ -526,37 +641,171 @@ impl PtyManager {
         panes: &Arc<Mutex<HashMap<String, PaneCtx>>>,
         processes: &Arc<Mutex<HashMap<String, ProcessEntry>>>,
         triggers: &Arc<Mutex<Vec<(Trigger, regex::Regex)>>>,
+        pending_exits: &mut HashMap<(String, u64), Option<i32>>,
+        reader_eofs: &mut HashSet<(String, u64)>,
     ) {
-        // Group output per pane, preserving arrival order (FIFO across panes).
-        let mut order: Vec<String> = Vec::new();
-        let mut grouped: HashMap<String, String> = HashMap::new();
-        let mut eofs: Vec<String> = Vec::new();
-        let mut injects: Vec<(String, String)> = Vec::new();
+        enum Lifecycle {
+            ReaderEof(String, u64),
+            ProcessExited(String, u64, Option<i32>),
+        }
+
+        // Reader output and ReaderEof share one sender, so their FIFO order is
+        // authoritative. ProcessExited only records the child status and
+        // closes the master; it never publishes UI exit ahead of final output.
+        let mut order: Vec<(String, u64)> = Vec::new();
+        let mut grouped: HashMap<(String, u64), String> = HashMap::new();
+        let mut lifecycle = Vec::new();
+        let mut injects: Vec<(String, u64, String)> = Vec::new();
         for m in msgs {
             match m {
-                PtyMsg::Output { pane_id, data } => {
+                PtyMsg::Output {
+                    pane_id,
+                    generation,
+                    data,
+                } => {
+                    let key = (pane_id.clone(), *generation);
                     grouped
-                        .entry(pane_id.clone())
+                        .entry(key.clone())
                         .and_modify(|_| {})
                         .or_insert_with(|| {
-                            order.push(pane_id.clone());
+                            order.push(key);
                             String::new()
                         })
                         .push_str(data);
                 }
-                PtyMsg::Eof { pane_id } => eofs.push(pane_id.clone()),
-                PtyMsg::Inject { pane_id, data } => injects.push((pane_id.clone(), data.clone())),
+                PtyMsg::ReaderEof {
+                    pane_id,
+                    generation,
+                } => {
+                    lifecycle.push(Lifecycle::ReaderEof(pane_id.clone(), *generation));
+                }
+                PtyMsg::ProcessExited {
+                    pane_id,
+                    generation,
+                    exit_code,
+                } => lifecycle.push(Lifecycle::ProcessExited(
+                    pane_id.clone(),
+                    *generation,
+                    *exit_code,
+                )),
+                PtyMsg::Inject {
+                    pane_id,
+                    generation,
+                    data,
+                } => {
+                    injects.push((pane_id.clone(), *generation, data.clone()));
+                }
             }
         }
 
+        // Output parsing and callbacks may be extension code. Contain failures
+        // to this phase so injections and EOF cleanup below are never dropped.
+        Self::contain_aggregator_panic("output batch", || {
+            Self::process_output_batch(&order, &grouped, sink, panes, triggers);
+        });
+
+        // Injections (resume commands) bypass user-input tracking.
+        for (pane_id, generation, data) in injects {
+            let process = processes
+                .lock()
+                .get(&pane_id)
+                .and_then(|entry| (entry.generation == generation).then(|| entry.process.clone()));
+            if let Some(process) = process {
+                Self::request_process_write(process, data.into_bytes());
+            }
+        }
+
+        for event in lifecycle {
+            match event {
+                Lifecycle::ProcessExited(pane_id, generation, exit_code) => {
+                    let key = (pane_id.clone(), generation);
+                    let Some(entry) = Self::take_process_entry(processes, &pane_id, generation)
+                    else {
+                        pending_exits.remove(&key);
+                        reader_eofs.remove(&key);
+                        continue;
+                    };
+                    if exit_code.is_some() {
+                        Self::request_process_finalize(entry.process);
+                    } else {
+                        Self::request_process_kill(entry.process);
+                    }
+                    if reader_eofs.remove(&key) {
+                        Self::finalize_pane_exit(panes, sink, &pane_id, generation, exit_code);
+                    } else {
+                        pending_exits.insert(key, exit_code);
+                    }
+                }
+                Lifecycle::ReaderEof(pane_id, generation) => {
+                    let key = (pane_id.clone(), generation);
+                    if let Some(code) = pending_exits.remove(&key) {
+                        Self::finalize_pane_exit(panes, sink, &pane_id, generation, code);
+                        continue;
+                    }
+                    let process = processes.lock().get(&pane_id).and_then(|entry| {
+                        (entry.generation == generation).then(|| entry.process.clone())
+                    });
+                    let Some(process) = process else {
+                        reader_eofs.remove(&key);
+                        continue;
+                    };
+
+                    match process.try_wait() {
+                        Ok(Some(code)) => {
+                            if let Some(entry) =
+                                Self::take_process_entry(processes, &pane_id, generation)
+                            {
+                                Self::request_process_finalize(entry.process);
+                                Self::finalize_pane_exit(
+                                    panes,
+                                    sink,
+                                    &pane_id,
+                                    generation,
+                                    Some(code),
+                                );
+                            }
+                        }
+                        Ok(None) => {
+                            // Give the watcher one polling interval to observe
+                            // a natural exit code before treating EOF as a
+                            // transport failure and terminating the child.
+                            reader_eofs.insert(key);
+                            Self::request_process_kill_after(process, Duration::from_millis(75));
+                        }
+                        Err(error) => {
+                            tracing::warn!(pane = %pane_id, "PTY EOF status check failed: {error}");
+                            reader_eofs.insert(key);
+                            Self::request_process_kill(process);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn process_output_batch(
+        order: &[(String, u64)],
+        grouped: &HashMap<(String, u64), String>,
+        sink: &Arc<dyn PtyEventSink>,
+        panes: &Arc<Mutex<HashMap<String, PaneCtx>>>,
+        triggers: &Arc<Mutex<Vec<(Trigger, regex::Regex)>>>,
+    ) {
         let mut batch = OutputBatch { chunks: Vec::new() };
+        let mut sides = Vec::new();
         {
             let mut panes_guard = panes.lock();
-            // Snapshot triggers outside the loop to avoid lock churn.
             let trigger_list = triggers.lock().clone();
-            for pane_id in &order {
-                let Some(ctx) = panes_guard.get_mut(pane_id) else { continue };
-                let data = grouped.get(pane_id).unwrap();
+            for key in order {
+                let (pane_id, generation) = key;
+                let Some(ctx) = panes_guard.get_mut(pane_id) else {
+                    continue;
+                };
+                if ctx.generation != *generation {
+                    continue;
+                }
+                let Some(data) = grouped.get(key) else {
+                    continue;
+                };
                 let chunk = ctx.ring.push(data.clone());
                 batch.chunks.push(PaneChunk {
                     pane_id: pane_id.clone(),
@@ -564,89 +813,56 @@ impl PtyManager {
                     data: chunk.data.clone(),
                 });
 
-                // titles + command blocks
                 let events = ctx.tracker.scan(&chunk.data);
                 if let Some(title) = events.title {
-                    sink.title(pane_id, &ctx.session_id, &title);
+                    sides.push(PaneSideEffect::Title {
+                        pane_id: pane_id.clone(),
+                        session_id: ctx.session_id.clone(),
+                        title,
+                    });
                 }
                 if let Some((cmd, out, code)) = events.completed_block {
                     if !out.is_empty() || !cmd.is_empty() {
-                        let block = make_block(
+                        sides.push(PaneSideEffect::Block(make_block(
                             &ctx.project_id,
                             &ctx.session_id,
                             pane_id,
                             cmd,
                             out,
                             code,
-                        );
-                        sink.block_completed(&block);
+                        )));
                     }
                 }
 
-                // plain tail for heuristics
                 let plain = strip_ansi(&chunk.data);
                 push_tail(&mut ctx.tail, &plain);
-
-                // triggers (line oriented, cooldown per trigger+pane)
                 if !trigger_list.is_empty() {
                     ctx.trigger_line.push_str(&plain);
-                    Self::eval_triggers(pane_id, ctx, &trigger_list, sink);
+                    Self::eval_triggers(pane_id, ctx, &trigger_list, &mut sides);
                 }
-
-                // agent status (throttled)
                 if let Some(kind) = ctx.agent_kind {
                     if ctx.last_status_at.elapsed() >= STATUS_THROTTLE {
                         ctx.last_status_at = Instant::now();
                         let status = infer_agent_status(kind, &ctx.tail);
                         if status != ctx.last_status {
                             ctx.last_status = status;
-                            sink.agent_status(pane_id, &ctx.session_id, kind, status);
+                            sides.push(PaneSideEffect::Agent {
+                                pane_id: pane_id.clone(),
+                                session_id: ctx.session_id.clone(),
+                                kind,
+                                status,
+                            });
                         }
                     }
                 }
             }
         }
 
+        Self::dispatch_side_effects(sink, sides);
         if !batch.chunks.is_empty() {
-            sink.output(&batch);
-        }
-
-        // Injections (resume commands) bypass user-input tracking.
-        for (pane_id, data) in injects {
-            let procs = processes.lock();
-            if let Some(entry) = procs.get(&pane_id) {
-                let mut p = entry.process.lock();
-                let _ = p.write(data.as_bytes());
-            }
-        }
-
-        for pane_id in eofs {
-            std::thread::sleep(Duration::from_millis(10));
-            let code = {
-                let procs = processes.lock();
-                procs
-                    .get(&pane_id)
-                    .and_then(|e| e.process.lock().try_wait().ok().flatten())
-            };
-            if let Some(ctx) = panes.lock().get_mut(&pane_id) {
-                ctx.exit_code = code;
-                // Flush any open command block on process exit.
-                if let Some((cmd, out, _)) = ctx.tracker.close_block(code) {
-                    if !out.is_empty() || !cmd.is_empty() {
-                        let block = make_block(
-                            &ctx.project_id,
-                            &ctx.session_id,
-                            &pane_id,
-                            cmd,
-                            out,
-                            code,
-                        );
-                        sink.block_completed(&block);
-                    }
-                }
-            }
-            processes.lock().remove(&pane_id);
-            sink.exit(&pane_id, code);
+            Self::contain_aggregator_panic("output callback", || {
+                sink.output(&batch);
+            });
         }
     }
 
@@ -654,7 +870,7 @@ impl PtyManager {
         pane_id: &str,
         ctx: &mut PaneCtx,
         trigger_list: &[(Trigger, regex::Regex)],
-        sink: &Arc<dyn PtyEventSink>,
+        sides: &mut Vec<PaneSideEffect>,
     ) {
         // Process complete lines; keep the partial remainder.
         while let Some(pos) = ctx.trigger_line.find('\n') {
@@ -668,14 +884,15 @@ impl PtyManager {
                 }
                 let now = Instant::now();
                 let last = ctx.trigger_cooldowns.get(&trigger.id);
-                if last.map(|t| now.duration_since(*t).as_millis() as u64)
+                if last
+                    .map(|t| now.duration_since(*t).as_millis() as u64)
                     .map(|ms| ms < trigger.cooldown_ms)
                     .unwrap_or(false)
                 {
                     continue;
                 }
                 ctx.trigger_cooldowns.insert(trigger.id.clone(), now);
-                sink.trigger_fired(&TriggerFire {
+                sides.push(PaneSideEffect::Trigger(TriggerFire {
                     pane_id: pane_id.to_string(),
                     session_id: ctx.session_id.clone(),
                     project_id: ctx.project_id.clone(),
@@ -683,11 +900,155 @@ impl PtyManager {
                     trigger_name: trigger.name.clone(),
                     actions: trigger.actions.clone(),
                     snippet: line.trim().chars().take(200).collect(),
-                });
+                }));
             }
         }
         if ctx.trigger_line.len() > 4096 {
             ctx.trigger_line.clear();
+        }
+    }
+
+    fn dispatch_side_effects(sink: &Arc<dyn PtyEventSink>, sides: Vec<PaneSideEffect>) {
+        for side in sides {
+            match side {
+                PaneSideEffect::Title {
+                    pane_id,
+                    session_id,
+                    title,
+                } => {
+                    Self::contain_aggregator_panic("title callback", || {
+                        sink.title(&pane_id, &session_id, &title);
+                    });
+                }
+                PaneSideEffect::Block(block) => {
+                    Self::contain_aggregator_panic("block callback", || {
+                        sink.block_completed(&block);
+                    });
+                }
+                PaneSideEffect::Agent {
+                    pane_id,
+                    session_id,
+                    kind,
+                    status,
+                } => {
+                    Self::contain_aggregator_panic("agent callback", || {
+                        sink.agent_status(&pane_id, &session_id, kind, status);
+                    });
+                }
+                PaneSideEffect::Trigger(fire) => {
+                    Self::contain_aggregator_panic("trigger callback", || {
+                        sink.trigger_fired(&fire);
+                    });
+                }
+            }
+        }
+    }
+
+    fn take_process_entry(
+        processes: &Arc<Mutex<HashMap<String, ProcessEntry>>>,
+        pane_id: &str,
+        generation: u64,
+    ) -> Option<ProcessEntry> {
+        let mut processes = processes.lock();
+        let matches = processes
+            .get(pane_id)
+            .map(|entry| entry.generation == generation)
+            .unwrap_or(false);
+        matches.then(|| processes.remove(pane_id)).flatten()
+    }
+
+    fn remove_pane_generation(
+        panes: &Arc<Mutex<HashMap<String, PaneCtx>>>,
+        pane_id: &str,
+        generation: u64,
+    ) {
+        let mut panes = panes.lock();
+        let matches = panes
+            .get(pane_id)
+            .map(|ctx| ctx.generation == generation)
+            .unwrap_or(false);
+        if matches {
+            panes.remove(pane_id);
+        }
+    }
+
+    fn finalize_pane_exit(
+        panes: &Arc<Mutex<HashMap<String, PaneCtx>>>,
+        sink: &Arc<dyn PtyEventSink>,
+        pane_id: &str,
+        generation: u64,
+        code: Option<i32>,
+    ) {
+        let completed = {
+            let mut panes = panes.lock();
+            let Some(ctx) = panes.get_mut(pane_id) else {
+                return;
+            };
+            if ctx.generation != generation {
+                return;
+            }
+            ctx.exit_code = code;
+            ctx.tracker.close_block(code).and_then(|(cmd, out, _)| {
+                (!out.is_empty() || !cmd.is_empty())
+                    .then(|| make_block(&ctx.project_id, &ctx.session_id, pane_id, cmd, out, code))
+            })
+        };
+        if let Some(block) = completed {
+            Self::contain_aggregator_panic("EOF block callback", || {
+                sink.block_completed(&block);
+            });
+        }
+        Self::contain_aggregator_panic("exit callback", || {
+            sink.exit(pane_id, code);
+        });
+    }
+
+    fn request_process_kill(process: Arc<dyn PtyProcess>) {
+        // Child termination uses its own lock, independent from writer/master
+        // backpressure, and process destruction stays off the aggregator.
+        let result = std::thread::Builder::new()
+            .name("pty-kill".into())
+            .spawn(move || {
+                let _ = process.kill();
+                let _ = process.close_transport();
+            });
+        if let Err(error) = result {
+            tracing::error!(%error, "failed to schedule PTY termination");
+        }
+    }
+
+    fn request_process_finalize(process: Arc<dyn PtyProcess>) {
+        let result = std::thread::Builder::new()
+            .name("pty-finalize".into())
+            .spawn(move || {
+                let _ = process.close_transport();
+            });
+        if let Err(error) = result {
+            tracing::error!(%error, "failed to schedule PTY finalization");
+        }
+    }
+
+    fn request_process_kill_after(process: Arc<dyn PtyProcess>, delay: Duration) {
+        let result = std::thread::Builder::new()
+            .name("pty-kill-delayed".into())
+            .spawn(move || {
+                std::thread::sleep(delay);
+                let _ = process.kill();
+                let _ = process.close_transport();
+            });
+        if let Err(error) = result {
+            tracing::error!(%error, "failed to schedule delayed PTY termination");
+        }
+    }
+
+    fn request_process_write(process: Arc<dyn PtyProcess>, data: Vec<u8>) {
+        let result = std::thread::Builder::new()
+            .name("pty-inject".into())
+            .spawn(move || {
+                let _ = process.write(&data);
+            });
+        if let Err(error) = result {
+            tracing::error!(%error, "failed to schedule PTY injection");
         }
     }
 
@@ -696,10 +1057,14 @@ impl PtyManager {
         if self.shutdown.swap(true, Ordering::SeqCst) {
             return;
         }
-        let mut processes = self.processes.lock();
-        for (_, entry) in processes.drain() {
-            let mut p = entry.process.lock();
-            let _ = p.kill();
+        let processes: Vec<_> = self
+            .processes
+            .lock()
+            .drain()
+            .map(|(_, entry)| entry.process)
+            .collect();
+        for process in processes {
+            Self::request_process_kill(process);
         }
     }
 }

@@ -43,13 +43,18 @@ export default function App() {
     let cancelled = false;
     const unlisteners: Array<() => void> = [];
     const add = (p: Promise<() => void>) => {
-      void p.then((u) => {
-        if (cancelled) {
-          u();
-          return;
-        }
-        unlisteners.push(u);
-      });
+      void p.then(
+        (u) => {
+          if (cancelled) {
+            u();
+            return;
+          }
+          unlisteners.push(u);
+        },
+        (err) => {
+          console.error("Failed to register global IPC listener", err);
+        },
+      );
     };
 
     add(onPtyOutput((batch) => ingest(batch.chunks)));

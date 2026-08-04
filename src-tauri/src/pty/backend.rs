@@ -32,13 +32,18 @@ impl PtySpec {
 }
 
 /// A running pseudo-terminal process.
-pub trait PtyProcess: Send {
+pub trait PtyProcess: Send + Sync {
     /// Take the output reader (called once, moved into a reader thread).
-    fn take_reader(&mut self) -> Result<Box<dyn Read + Send>, AppError>;
-    fn write(&mut self, data: &[u8]) -> Result<(), AppError>;
-    fn resize(&mut self, cols: u16, rows: u16) -> Result<(), AppError>;
-    fn kill(&mut self) -> Result<(), AppError>;
-    fn try_wait(&mut self) -> Result<Option<i32>, AppError>;
+    fn take_reader(&self) -> Result<Box<dyn Read + Send>, AppError>;
+    fn write(&self, data: &[u8]) -> Result<(), AppError>;
+    fn resize(&self, cols: u16, rows: u16) -> Result<(), AppError>;
+    fn kill(&self) -> Result<(), AppError>;
+    /// Close the PTY transport independently from in-flight reads or writes.
+    /// Implementations must make this idempotent.
+    fn close_transport(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+    fn try_wait(&self) -> Result<Option<i32>, AppError>;
     fn pid(&self) -> Option<u32>;
 }
 
