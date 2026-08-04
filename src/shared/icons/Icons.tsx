@@ -43,47 +43,6 @@ export function IconStar(p: IconProps) {
   );
 }
 
-/**
- * Galaxy brand mark (Grok-style singularity / spiral galaxy).
- * Prefer raster `./icon.png` for titlebar; this SVG is a crisp fallback.
- */
-export function IconLogo(p: IconProps) {
-  const size = p.size ?? 16;
-  return (
-    <svg
-      className={["pixel-icon logo-mark", p.className].filter(Boolean).join(" ")}
-      width={size}
-      height={size}
-      viewBox="0 0 32 32"
-      fill="none"
-      aria-hidden={p.title ? undefined : true}
-      role={p.title ? "img" : undefined}
-      focusable="false"
-    >
-      {p.title ? <title>{p.title}</title> : null}
-      <circle cx="16" cy="16" r="15" fill="#080a0b" />
-      {/* accretion disk */}
-      <path
-        fill="currentColor"
-        d="M16 4.5c6.35 0 11.5 5.15 11.5 11.5 0 3.4-1.48 6.45-3.85 8.55 1.15-1.55 1.85-3.45 1.85-5.55 0-5.25-4.25-9.5-9.5-9.5S6.5 13.75 6.5 19s4.25 9.5 9.5 9.5c1.35 0 2.65-.28 3.85-.8C18.55 28.55 17.3 29 16 29 8.82 29 3 23.18 3 16S8.82 3 16 3c2.2 0 4.28.52 6.15 1.45C20.35 4.2 18.2 4.2 16 4.5z"
-        opacity="0.95"
-      />
-      <path
-        fill="currentColor"
-        d="M16 8c4.42 0 8 3.58 8 8 0 2.2-.9 4.2-2.35 5.65.75-1.05 1.2-2.35 1.2-3.75 0-3.45-2.8-6.25-6.25-6.25S10.35 14.45 10.35 17.9 13.15 24.15 16.6 24.15c.95 0 1.85-.2 2.65-.55-.95.75-2.15 1.2-3.45 1.2-3.7 0-6.7-3-6.7-6.7s3-6.7 6.7-6.7c1.15 0 2.25.3 3.2.8-.95-.2-1.95-.3-3-.15z"
-      />
-      {/* event horizon */}
-      <circle cx="16" cy="16" r="4.2" fill="#080a0b" />
-      {/* spiral arm / G tail */}
-      <path
-        fill="currentColor"
-        d="M20.5 17.5c1.1 2.4 3.6 3.8 6.2 3.5-1.9.25-3.7-.35-5-1.65-.75-.8-1.25-1.8-1.55-2.8.05.35.15.65.35.95z"
-        opacity="0.92"
-      />
-    </svg>
-  );
-}
-
 /** Sidebar toggle */
 export function IconSidebar(p: IconProps) {
   return (

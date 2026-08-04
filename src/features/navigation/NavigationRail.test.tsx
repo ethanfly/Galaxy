@@ -50,4 +50,11 @@ describe("NavigationRail", () => {
     expect(useUiStore.getState().blockSearchOpen).toBe(false);
     expect(history.getAttribute("aria-expanded")).toBe("true");
   });
+
+  it("starts with navigation and does not repeat the product brand", () => {
+    const { container } = render(<NavigationRail />);
+
+    expect(container.querySelector(".rail-brand")).toBeNull();
+    expect(screen.getAllByRole("button")).toHaveLength(4);
+  });
 });

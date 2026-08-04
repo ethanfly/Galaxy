@@ -66,7 +66,7 @@ git clone <repo> galaxy-terminal
 cd galaxy-terminal
 
 npm ci
-npm run gen:icons           # 重新生成像素图标（幂等，纯 Node 脚本无外部依赖）
+npm run gen:icons           # 从唯一 SVG 母版幂等生成 Web / Tauri 图标
 npm run tauri build -- -- --locked   # 第二个 `--` 把 --locked 交给 cargo
 ```
 

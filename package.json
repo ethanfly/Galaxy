@@ -8,7 +8,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "npm run test:unit && npm run test:icons",
+    "test:unit": "vitest run",
+    "test:icons": "node --test scripts/gen-icons.test.mjs",
     "test:watch": "vitest",
     "tauri": "tauri",
     "gen:icons": "node scripts/gen-icons.mjs",
@@ -31,6 +33,7 @@
     "zustand": "^5.0.5"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@tauri-apps/cli": "^2.6.0",
     "@testing-library/react": "^16.3.0",
     "@types/react": "^18.3.20",
@@ -38,6 +41,7 @@
     "@vitejs/plugin-react": "^4.4.1",
     "jsdom": "^26.1.0",
     "playwright": "^1.52.0",
+    "pngjs": "^7.0.0",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
     "vitest": "^3.1.4"

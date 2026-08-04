@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/logo.png" alt="Galaxy Terminal" width="160" height="160" />
+  <img src="public/brand/galaxy-mark.svg" alt="Galaxy Terminal" width="160" height="160" />
 </p>
 
 <h1 align="center">银河终端 Galaxy Terminal</h1>
@@ -32,10 +32,10 @@
 
 在终端里同时跑多个 **AI 编程 Agent**、多项目、多分屏，已经成为日常。Galaxy 把「终端工作区 + 项目侧栏 + Agent 历史 + Git + 命令块」收成一款**桌面原生应用**，而不是再套一层 Electron 浏览器。
 
-品牌标识取自 **奇点 / 吸积盘**（Grok logo 同系极简宇宙美学）与 **螺旋星系**：中心视界、外层光环、右下星系臂，既是「G」的抽象，也是 Galaxy 的象征。
+品牌标识采用原创的 **几何轨道 G**：深黑圆角场承载一条灿白连续轨道，在小尺寸下仍保持清晰。设计借鉴现代 AI 产品的大胆单色几何感，但不复制任何现有标志。
 
 <p align="center">
-  <img src="public/icon.png" alt="Galaxy mark" width="72" height="72" />
+  <img src="public/brand/galaxy-mark.svg" alt="Galaxy mark" width="72" height="72" />
 </p>
 
 ---
@@ -92,9 +92,9 @@
 ### 界面与品牌
 
 - 炭黑工作台主题（信号绿 / 青 / 琥珀语义色）
-- 像素风 SVG 图标集（非系统 Emoji）
+- 统一圆角描边 SVG 图标集（非系统 Emoji）
 - 项目列表 / 标签 / 设置导航统一选中态
-- Grok 风格 singularity logo 全局应用（标题栏、favicon、安装包图标）
+- 原创几何轨道 G 由同一 SVG 母版生成标题栏、favicon 与安装包图标
 
 ---
 
@@ -193,7 +193,7 @@ npm run tauri dev      # Vite + Rust 热重载
 npm test                 # Vitest 前端单元测试
 npm run build            # 仅前端生产构建
 npm run tauri build      # 完整桌面安装包
-npm run gen:icons        # 重新生成图标（无主图时用程序化 singularity）
+npm run gen:icons        # 从唯一 SVG 母版重新生成 Web / Tauri 图标
 npm run gen:licenses     # 第三方许可清单
 npm run version:show     # 当前版本
 npm run version:patch    # 补丁版本 +1（同步三处清单）
@@ -303,6 +303,6 @@ Proprietary — 见仓库声明与 [docs/THIRD_PARTY_LICENSES.md](docs/THIRD_PAR
 ---
 
 <p align="center">
-  <img src="public/icon.png" width="48" height="48" alt="Galaxy" /><br/>
+  <img src="public/brand/galaxy-mark.svg" width="48" height="48" alt="Galaxy" /><br/>
   <sub>Galaxy Terminal — multi-terminal workspace for the multi-agent era</sub>
 </p>

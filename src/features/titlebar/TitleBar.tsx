@@ -97,7 +97,7 @@ export function TitleBar() {
       >
         <img
           className="icon-logo"
-          src="./icon.png"
+          src="./brand/galaxy-mark.svg"
           alt=""
           width={18}
           height={18}

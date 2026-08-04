@@ -213,21 +213,12 @@ html, body, #root {
 }
 .window-controls button.close:hover { background: var(--red-400); color: #12060b; }
 
-/* Brand mark — Grok-style singularity / spiral galaxy */
+/* The authored SVG owns the complete flat brand mark. */
 .icon-logo {
   width: 18px;
   height: 18px;
-  border-radius: 4px;
   flex: none;
-  object-fit: cover;
-  background: var(--space-0);
-  box-shadow:
-    0 0 0 1px var(--border-subtle),
-    0 4px 12px rgba(0, 0, 0, 0.28);
-}
-.logo-mark {
-  color: var(--accent-soft);
-  border-radius: 4px;
+  object-fit: contain;
 }
 .project-sep {
   color: var(--text-lo);
@@ -1100,14 +1091,6 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
   border-right: 1px solid #24292d;
   padding: 7px 0 8px;
   z-index: 32;
-}
-.rail-brand {
-  width: 40px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  color: #d9ffef;
-  margin-bottom: 8px;
 }
 .rail-actions {
   display: flex;

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Galaxy Terminal">
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="#030303" />
+  <path
+    d="M48.5 18.5C44.6 12.9 38.4 9.5 31.4 9.5C19.2 9.5 9.5 19.4 9.5 31.8C9.5 44.2 19.3 54.1 31.7 54.1C42.6 54.1 51.2 46.8 53 36.2H34.8"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="7.2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

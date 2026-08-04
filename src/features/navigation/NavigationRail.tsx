@@ -1,4 +1,4 @@
-import { IconHistory, IconLogo, IconSettings, IconTerminal } from "../../shared/icons/Icons";
+import { IconHistory, IconSettings, IconTerminal } from "../../shared/icons/Icons";
 import { t } from "../../shared/i18n";
 import { useUiStore } from "../../shared/stores/uiStore";
 
@@ -49,9 +49,6 @@ export function NavigationRail() {
 
   return (
     <nav className="navigation-rail" aria-label={t("primaryNavigation")}>
-      <div className="rail-brand" aria-label={t("appName")}>
-        <IconLogo size={22} />
-      </div>
       <div className="rail-actions">
         {actions.map(({ id, label, icon: Icon, active, dialog, onClick }) => (
           <button
