@@ -1,6 +1,6 @@
 [package]
 name = "galaxy-terminal"
-version = "0.1.10"
+version = "0.1.11"
 description = "Galaxy Terminal — commercial multi-terminal workspace"
 authors = ["Galaxy Terminal"]
 edition = "2021"
