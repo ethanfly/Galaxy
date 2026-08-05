@@ -1213,7 +1213,7 @@ dependencies = [
 
 [[package]]
 name = "galaxy-terminal"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "directories",
  "encoding_rs",
