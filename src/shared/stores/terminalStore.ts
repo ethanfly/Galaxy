@@ -1,13 +1,14 @@
 // Terminal runtime state: sequence tracking, activity pulses, agent status,
 // and the xterm instance registry (non-reactive, pane-scoped).
 import { create } from "zustand";
+import { subscribeWithSelector } from "zustand/middleware";
 
 import { ptyReplay } from "../ipc/client";
 import type { AgentKind, AgentStatus, PaneChunk } from "../ipc/types";
 
 export interface TerminalHandle {
   paneId: string;
-  write(data: string): void;
+  write(data: string, seq: number, generation: number): void;
   replay(chunks: PaneChunk[]): void;
   truncatedNotice(): void;
 }
@@ -16,6 +17,10 @@ export interface TerminalHandle {
 const registry = new Map<string, TerminalHandle>();
 export function registerTerminal(handle: TerminalHandle) {
   registry.set(handle.paneId, handle);
+  const delivery = deliveries.get(handle.paneId);
+  if (!delivery) return;
+  flushContiguous(handle.paneId, delivery);
+  startGapRecovery(handle.paneId, delivery);
 }
 /** Only remove if this handle is still the registered one (StrictMode race). */
 export function unregisterTerminal(paneId: string, handle?: TerminalHandle) {
@@ -25,6 +30,17 @@ export function unregisterTerminal(paneId: string, handle?: TerminalHandle) {
 export function terminalFor(paneId: string): TerminalHandle | undefined {
   return registry.get(paneId);
 }
+
+interface PaneDeliveryState {
+  generation: number;
+  committedSeq: number;
+  buffered: Map<number, PaneChunk>;
+  recovering: boolean;
+}
+
+// Gap recovery is pane-scoped and non-reactive. Later live chunks stay here
+// until the missing range has been replayed into xterm in sequence order.
+const deliveries = new Map<string, PaneDeliveryState>();
 
 interface TerminalStoreState {
   lastSeq: Record<string, number>;
@@ -47,100 +63,166 @@ interface TerminalStoreState {
   resetPane(paneId: string): void;
 }
 
-export const useTerminalStore = create<TerminalStoreState>((set, get) => ({
-  lastSeq: {},
-  activity: {},
-  agentStatus: {},
-  marks: {},
-  scrollLocked: {},
-  focusedPane: {},
+export const useTerminalStore = create<TerminalStoreState>()(
+  subscribeWithSelector((set, get) => ({
+    lastSeq: {},
+    activity: {},
+    agentStatus: {},
+    marks: {},
+    scrollLocked: {},
+    focusedPane: {},
 
-  ingest(chunks) {
-    const pendingGaps: string[] = [];
-    const { lastSeq, activity } = get();
-    const nextSeq = { ...lastSeq };
-    const nextActivity = { ...activity };
-    const now = Date.now();
-    for (const chunk of chunks) {
-      const prev = nextSeq[chunk.paneId] ?? 0;
-      if (chunk.seq > prev + 1 && prev > 0) {
-        // Sequence gap → request backend ring replay (spec §3.2).
-        pendingGaps.push(chunk.paneId);
-        void replayFrom(chunk.paneId, prev).then((latest) => {
-          nextSeq[chunk.paneId] = Math.max(nextSeq[chunk.paneId] ?? 0, latest, chunk.seq);
-          set({ lastSeq: { ...get().lastSeq, [chunk.paneId]: nextSeq[chunk.paneId] } });
-        });
-        nextSeq[chunk.paneId] = chunk.seq;
-      } else {
-        nextSeq[chunk.paneId] = chunk.seq;
-        const term = terminalFor(chunk.paneId);
-        term?.write(chunk.data);
+    ingest(chunks) {
+      const nextActivity = { ...get().activity };
+      const now = Date.now();
+      for (const chunk of chunks) {
+        enqueueChunk(chunk);
+        nextActivity[chunk.paneId] = now;
       }
-      nextActivity[chunk.paneId] = now;
-    }
-    set({ lastSeq: nextSeq, activity: nextActivity });
-    for (const paneId of pendingGaps) {
-      void paneId;
-    }
-  },
+      set({ activity: nextActivity });
+    },
 
-  markGap(paneId, fromSeq) {
-    set({ lastSeq: { ...get().lastSeq, [paneId]: fromSeq } });
-  },
+    markGap(paneId, fromSeq) {
+      set({ lastSeq: { ...get().lastSeq, [paneId]: fromSeq } });
+    },
 
-  setAgent(paneId, kind, status) {
-    set({ agentStatus: { ...get().agentStatus, [paneId]: { kind, status } } });
-    void kind;
-  },
+    setAgent(paneId, kind, status) {
+      set({ agentStatus: { ...get().agentStatus, [paneId]: { kind, status } } });
+      void kind;
+    },
 
-  addMark(paneId) {
-    set({ marks: { ...get().marks, [paneId]: (get().marks[paneId] ?? 0) + 1 } });
-  },
+    addMark(paneId) {
+      set({ marks: { ...get().marks, [paneId]: (get().marks[paneId] ?? 0) + 1 } });
+    },
 
-  clearMarks(paneId) {
-    set({ marks: { ...get().marks, [paneId]: 0 } });
-  },
+    clearMarks(paneId) {
+      set({ marks: { ...get().marks, [paneId]: 0 } });
+    },
 
-  setScrollLocked(paneId, locked) {
-    set({ scrollLocked: { ...get().scrollLocked, [paneId]: locked } });
-  },
+    setScrollLocked(paneId, locked) {
+      set({ scrollLocked: { ...get().scrollLocked, [paneId]: locked } });
+    },
 
-  setFocusedPane(sessionId, paneId) {
-    set({ focusedPane: { ...get().focusedPane, [sessionId]: paneId } });
-  },
+    setFocusedPane(sessionId, paneId) {
+      set({ focusedPane: { ...get().focusedPane, [sessionId]: paneId } });
+    },
 
-  resetPane(paneId) {
-    const { lastSeq, activity, agentStatus, marks, scrollLocked } = get();
-    delete lastSeq[paneId];
-    delete activity[paneId];
-    delete agentStatus[paneId];
-    delete marks[paneId];
-    delete scrollLocked[paneId];
-    set({
-      lastSeq: { ...lastSeq },
-      activity: { ...activity },
-      agentStatus: { ...agentStatus },
-      marks: { ...marks },
-      scrollLocked: { ...scrollLocked },
+    resetPane(paneId) {
+      deliveries.delete(paneId);
+      const { lastSeq, activity, agentStatus, marks, scrollLocked } = get();
+      delete lastSeq[paneId];
+      delete activity[paneId];
+      delete agentStatus[paneId];
+      delete marks[paneId];
+      delete scrollLocked[paneId];
+      set({
+        lastSeq: { ...lastSeq },
+        activity: { ...activity },
+        agentStatus: { ...agentStatus },
+        marks: { ...marks },
+        scrollLocked: { ...scrollLocked },
+      });
+    },
+  })),
+);
+
+function enqueueChunk(chunk: PaneChunk) {
+  let delivery = deliveries.get(chunk.paneId);
+  if (delivery && chunk.generation < delivery.generation) return;
+  if (!delivery || chunk.generation > delivery.generation) {
+    delivery = {
+      generation: chunk.generation,
+      committedSeq: 0,
+      buffered: new Map(),
+      recovering: false,
+    };
+    deliveries.set(chunk.paneId, delivery);
+    useTerminalStore.setState((state) => {
+      const lastSeq = { ...state.lastSeq };
+      delete lastSeq[chunk.paneId];
+      return { lastSeq };
     });
-  },
-}));
-
-async function replayFrom(paneId: string, afterSeq: number): Promise<number> {
-  try {
-    const replay = await ptyReplay(paneId, afterSeq);
-    const term = terminalFor(paneId);
-    if (!term) return afterSeq;
-    if (replay.truncated) {
-      term.truncatedNotice();
-    }
-    let latest = afterSeq;
-    for (const chunk of replay.chunks) {
-      term.write(chunk.data);
-      latest = Math.max(latest, chunk.seq);
-    }
-    return latest;
-  } catch {
-    return afterSeq;
   }
+  if (chunk.seq <= delivery.committedSeq) return;
+
+  delivery.buffered.set(chunk.seq, chunk);
+  flushContiguous(chunk.paneId, delivery);
+  startGapRecovery(chunk.paneId, delivery);
+}
+
+function flushContiguous(paneId: string, delivery: PaneDeliveryState) {
+  const terminal = terminalFor(paneId);
+  if (!terminal) return;
+  let advanced = false;
+  while (true) {
+    const nextSeq = delivery.committedSeq + 1;
+    const chunk = delivery.buffered.get(nextSeq);
+    if (!chunk) break;
+    delivery.buffered.delete(nextSeq);
+    terminal.write(chunk.data, chunk.seq, chunk.generation);
+    delivery.committedSeq = chunk.seq;
+    advanced = true;
+  }
+  if (advanced) {
+    useTerminalStore.setState((state) => ({
+      lastSeq: { ...state.lastSeq, [paneId]: delivery.committedSeq },
+    }));
+  }
+}
+
+function hasGap(delivery: PaneDeliveryState) {
+  return delivery.buffered.size > 0 && !delivery.buffered.has(delivery.committedSeq + 1);
+}
+
+function startGapRecovery(paneId: string, delivery: PaneDeliveryState) {
+  if (delivery.recovering || !terminalFor(paneId) || !hasGap(delivery)) return;
+  delivery.recovering = true;
+
+  void (async () => {
+    try {
+      while (deliveries.get(paneId) === delivery && hasGap(delivery)) {
+        const afterSeq = delivery.committedSeq;
+        let replay;
+        try {
+          replay = await ptyReplay(paneId, afterSeq, delivery.generation);
+        } catch {
+          break;
+        }
+        if (
+          deliveries.get(paneId) !== delivery ||
+          replay.generation !== delivery.generation ||
+          !terminalFor(paneId)
+        ) {
+          break;
+        }
+
+        if (replay.truncated) {
+          terminalFor(paneId)?.truncatedNotice();
+          const firstAvailable =
+            replay.fromSeq ??
+            replay.chunks.reduce<number | undefined>(
+              (lowest, chunk) =>
+                lowest == null ? chunk.seq : Math.min(lowest, chunk.seq),
+              undefined,
+            );
+          if (firstAvailable != null && firstAvailable > delivery.committedSeq + 1) {
+            delivery.committedSeq = firstAvailable - 1;
+          }
+        }
+
+        for (const chunk of [...replay.chunks].sort((a, b) => a.seq - b.seq)) {
+          if (
+            chunk.generation === delivery.generation &&
+            chunk.seq > delivery.committedSeq
+          ) {
+            delivery.buffered.set(chunk.seq, chunk);
+          }
+        }
+        flushContiguous(paneId, delivery);
+        if (delivery.committedSeq === afterSeq) break;
+      }
+    } finally {
+      if (deliveries.get(paneId) === delivery) delivery.recovering = false;
+    }
+  })();
 }

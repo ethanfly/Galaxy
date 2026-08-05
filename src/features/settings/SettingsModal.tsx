@@ -42,6 +42,7 @@ export function SettingsModal() {
   const setConfig = useAppStore((s) => s.setConfig);
   const error = useAppStore((s) => s.error);
   const [draft, setDraft] = useState<AppConfig | null>(null);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open && config) {
@@ -58,17 +59,44 @@ export function SettingsModal() {
 
   if (!open || !draft) return null;
 
+  const isAppearanceValid = (value: AppConfig) =>
+    Number.isFinite(value.terminalFontSize) &&
+    Number.isInteger(value.terminalFontSize) &&
+    value.terminalFontSize >= 8 &&
+    value.terminalFontSize <= 32 &&
+    Number.isFinite(value.uiFontSize) &&
+    Number.isInteger(value.uiFontSize) &&
+    value.uiFontSize >= 8 &&
+    value.uiFontSize <= 24;
+
+  const requestClose = () => {
+    if (!saving) close();
+  };
+
   const save = async () => {
-    setLanguage(draft.language);
-    const ok = await setConfig(draft);
-    if (ok) close();
+    if (saving || !isAppearanceValid(draft)) return;
+    setSaving(true);
+    try {
+      const ok = await setConfig(draft);
+      if (ok) {
+        setLanguage(draft.language);
+        close();
+      }
+    } finally {
+      setSaving(false);
+    }
   };
 
   const changeDraft = (next: AppConfig) => {
+    if (saving) return;
     setDraft(next);
     if (
+      Number.isFinite(next.terminalFontSize) &&
+      Number.isInteger(next.terminalFontSize) &&
       next.terminalFontSize >= 8 &&
       next.terminalFontSize <= 32 &&
+      Number.isFinite(next.uiFontSize) &&
+      Number.isInteger(next.uiFontSize) &&
       next.uiFontSize >= 8 &&
       next.uiFontSize <= 24
     ) {
@@ -80,7 +108,7 @@ export function SettingsModal() {
   };
 
   return (
-    <Modal title={t("settings")} onClose={close} className="settings-modal" width="78vw">
+    <Modal title={t("settings")} onClose={requestClose} className="settings-modal" width="78vw">
       <div className="settings-shell">
         <div className="settings-nav">
           {SETTINGS_SECTIONS.map((s) => (
@@ -89,6 +117,7 @@ export function SettingsModal() {
               type="button"
               className={section === s.id ? "active" : ""}
               aria-current={section === s.id ? "page" : undefined}
+              disabled={saving}
               onClick={() => setSection(s.id)}
             >
               {t(s.labelKey)}
@@ -111,8 +140,14 @@ export function SettingsModal() {
         </div>
       </div>
       <div className="modal-footer">
-        <button className="btn" onClick={close}>{t("cancel")}</button>
-        <button className="btn primary" onClick={() => void save()}>{t("save")}</button>
+        <button className="btn" disabled={saving} onClick={requestClose}>{t("cancel")}</button>
+        <button
+          className="btn primary"
+          disabled={saving || !isAppearanceValid(draft)}
+          onClick={() => void save()}
+        >
+          {t("save")}
+        </button>
       </div>
     </Modal>
   );
@@ -156,6 +191,7 @@ function GeneralSection({
             type="number"
             min={8}
             max={32}
+            step={1}
             value={draft.terminalFontSize}
             onChange={(e) => update({ terminalFontSize: Number(e.target.value) })}
           />
@@ -168,6 +204,7 @@ function GeneralSection({
             type="number"
             min={8}
             max={24}
+            step={1}
             value={draft.uiFontSize}
             onChange={(e) => update({ uiFontSize: Number(e.target.value) })}
           />

@@ -9,7 +9,7 @@ export interface RenderedScreenSource {
     active: {
       baseY: number;
       getLine(index: number):
-        | { translateToString(trimRight?: boolean): string }
+        | { isWrapped?: boolean; translateToString(trimRight?: boolean): string }
         | undefined;
     };
   };
@@ -25,7 +25,14 @@ export function readAgentScreen(
   const start = Math.max(buffer.baseY, end - Math.max(rowCount, 1) + 1);
   const lines: string[] = [];
   for (let index = start; index <= end; index += 1) {
-    lines.push(buffer.getLine(index)?.translateToString(true) ?? "");
+    const line = buffer.getLine(index);
+    const nextLine = index < end ? buffer.getLine(index + 1) : undefined;
+    const text = line?.translateToString(!nextLine?.isWrapped) ?? "";
+    if (line?.isWrapped && lines.length > 0) {
+      lines[lines.length - 1] += text;
+    } else {
+      lines.push(text);
+    }
   }
   return utf8Tail(lines.join("\n").trimEnd(), maxBytes);
 }
@@ -47,31 +54,54 @@ interface ObserverOptions {
   trailingMs?: number;
 }
 
+export interface AgentScreenSnapshot {
+  screen: string;
+  renderedGeneration: number;
+  renderedSeq: number;
+}
+
 export function createAgentScreenObserver(
-  read: () => string,
-  send: (screen: string) => Promise<void>,
+  read: () => AgentScreenSnapshot,
+  send: (snapshot: AgentScreenSnapshot) => Promise<void>,
   options: ObserverOptions = {},
 ): { schedule(): void; dispose(): void } {
   const throttleMs = options.throttleMs ?? DEFAULT_THROTTLE_MS;
   const trailingMs = options.trailingMs ?? DEFAULT_TRAILING_MS;
   let disposed = false;
-  let lastSent: string | null = null;
+  let lastSent: AgentScreenSnapshot | null = null;
   let lastSentAt = Number.NEGATIVE_INFINITY;
   let throttleTimer: ReturnType<typeof setTimeout> | null = null;
   let trailingTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const transmit = (force = false) => {
+  function armTrailing() {
+    if (trailingTimer) clearTimeout(trailingTimer);
+    trailingTimer = setTimeout(() => {
+      trailingTimer = null;
+      transmit(true);
+    }, trailingMs);
+  }
+
+  function transmit(force = false) {
     if (disposed) return;
-    const screen = read();
-    if (!screen || (!force && screen === lastSent)) return;
-    lastSent = screen;
+    const snapshot = read();
+    if (
+      !snapshot.screen ||
+      (!force &&
+        snapshot.screen === lastSent?.screen &&
+        snapshot.renderedGeneration === lastSent.renderedGeneration &&
+        snapshot.renderedSeq === lastSent.renderedSeq)
+    ) {
+      return;
+    }
+    lastSent = snapshot;
     lastSentAt = Date.now();
     try {
-      void send(screen).catch(() => undefined);
+      void send(snapshot).catch(() => undefined);
     } catch {
       // Observation is best-effort and must never interrupt terminal rendering.
     }
-  };
+    if (!force) armTrailing();
+  }
 
   const schedule = () => {
     if (disposed) return;
@@ -87,11 +117,7 @@ export function createAgentScreenObserver(
       }, remaining);
     }
 
-    if (trailingTimer) clearTimeout(trailingTimer);
-    trailingTimer = setTimeout(() => {
-      trailingTimer = null;
-      transmit(true);
-    }, trailingMs);
+    armTrailing();
   };
 
   const dispose = () => {

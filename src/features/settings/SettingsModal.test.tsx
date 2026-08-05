@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AppConfig } from "../../shared/ipc/types";
 import { useAppStore } from "../../shared/stores/appStore";
@@ -114,6 +114,16 @@ describe("settings appearance preview", () => {
     });
   });
 
+  it("keeps focus in the appearance input while its draft rerenders", () => {
+    render(<SettingsModal />);
+
+    const [terminalInput] = screen.getAllByRole("spinbutton");
+    terminalInput.focus();
+    fireEvent.change(terminalInput, { target: { value: "20" } });
+
+    expect(document.activeElement).toBe(terminalInput);
+  });
+
   it("retains the last valid preview when a font draft becomes empty or out of range", () => {
     render(<SettingsModal />);
 
@@ -122,11 +132,25 @@ describe("settings appearance preview", () => {
     fireEvent.change(uiInput, { target: { value: "18" } });
     fireEvent.change(terminalInput, { target: { value: "" } });
     fireEvent.change(uiInput, { target: { value: "25" } });
+    fireEvent.change(terminalInput, { target: { value: "20.5" } });
 
     expect(useUiStore.getState().appearancePreview).toEqual({
       terminalFontSize: 20,
       uiFontSize: 18,
     });
+  });
+
+  it("does not enable Save for fractional appearance values", () => {
+    render(<SettingsModal />);
+
+    const [terminalInput] = screen.getAllByRole("spinbutton");
+    fireEvent.change(terminalInput, { target: { value: "20.5" } });
+
+    expect(screen.getByRole("dialog").querySelector(".btn.primary")).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(useUiStore.getState().appearancePreview).toBeNull();
   });
 
   it("cancels an appearance preview without changing the persisted config", () => {
@@ -173,6 +197,74 @@ describe("settings appearance preview", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    expect(useUiStore.getState().appearancePreview).toEqual({
+      terminalFontSize: 20,
+      uiFontSize: 18,
+    });
+  });
+
+  it("blocks dismissal and duplicate saves until an async save settles", async () => {
+    let resolveSave!: (ok: boolean) => void;
+    const save = vi.fn(
+      (next: AppConfig) =>
+        new Promise<boolean>((resolve) => {
+          resolveSave = (ok) => {
+            if (ok) useAppStore.setState({ config: next });
+            resolve(ok);
+          };
+        }),
+    );
+    useAppStore.setState({ setConfig: save });
+    render(<SettingsModal />);
+
+    const dialog = screen.getByRole("dialog");
+    const [terminalInput, uiInput] = screen.getAllByRole("spinbutton");
+    fireEvent.change(terminalInput, { target: { value: "20" } });
+    fireEvent.change(uiInput, { target: { value: "18" } });
+    const saveButton = dialog.querySelector<HTMLButtonElement>(".modal-footer .btn.primary")!;
+    const cancelButton = dialog.querySelector<HTMLButtonElement>(".modal-footer .btn:not(.primary)")!;
+    fireEvent.click(saveButton);
+    fireEvent.click(saveButton);
+    fireEvent.click(cancelButton);
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(saveButton.disabled).toBe(true);
+    expect(cancelButton.disabled).toBe(true);
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    await act(async () => {
+      resolveSave(true);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("keeps a failed delayed save open and restores dismissal afterward", async () => {
+    let resolveSave!: (ok: boolean) => void;
+    useAppStore.setState({
+      setConfig: async () =>
+        new Promise<boolean>((resolve) => {
+          resolveSave = resolve;
+        }),
+    });
+    render(<SettingsModal />);
+
+    const dialog = screen.getByRole("dialog");
+    const [terminalInput, uiInput] = screen.getAllByRole("spinbutton");
+    fireEvent.change(terminalInput, { target: { value: "20" } });
+    fireEvent.change(uiInput, { target: { value: "18" } });
+    fireEvent.click(dialog.querySelector<HTMLButtonElement>(".modal-footer .btn.primary")!);
+    fireEvent.keyDown(window, { key: "Escape" });
+    await act(async () => {
+      resolveSave(false);
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(dialog.querySelector<HTMLButtonElement>(".modal-footer .btn")?.disabled).toBe(false),
+    );
+
+    expect(screen.getByRole("dialog")).toBeTruthy();
     expect(useUiStore.getState().appearancePreview).toEqual({
       terminalFontSize: 20,
       uiFontSize: 18,

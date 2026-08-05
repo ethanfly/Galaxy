@@ -173,53 +173,79 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     terminals.set(pane.id, term);
     searchAddons.set(pane.id, search);
 
-    // Register replay/write surface for the batching pipeline.
+    const current = useAppStore.getState().sessions.find((item) => item.id === session.id);
+    let agentKnown = Boolean(
+      pane.agentKind ||
+        useTerminalStore.getState().agentStatus[pane.id] ||
+        (current && layoutPanes(current.layout).find((item) => item.id === pane.id)?.agentKind),
+    );
+    let inputAlive = true;
+    let renderedGeneration = 0;
+    let renderedSeq = 0;
+    const screenObserver = createAgentScreenObserver(
+      () => ({ screen: readAgentScreen(term), renderedGeneration, renderedSeq }),
+      (snapshot) =>
+        ptyObserveScreen(
+          pane.id,
+          snapshot.screen,
+          snapshot.renderedGeneration,
+          snapshot.renderedSeq,
+        ),
+    );
+
+    const recordRenderedOutput = (generation: number, seq: number) => {
+      if (!inputAlive) return;
+      // xterm completes queued writes in FIFO order. Assignment also lets a
+      // restarted pane adopt its new ring, whose sequence begins at one.
+      renderedGeneration = generation;
+      renderedSeq = seq;
+      if (agentKnown) screenObserver.schedule();
+    };
+    const writeOutput = (data: string, seq: number, generation: number) => {
+      if (useTerminalStore.getState().scrollLocked[pane.id]) {
+        // stop-scroll trigger action: keep the viewport where the user left
+        // it even while output keeps flowing.
+        const buffer = term.buffer.active;
+        const y = buffer.viewportY;
+        term.write(data, () => {
+          try {
+            term.scrollToLine(y);
+          } catch {
+            /* buffer scrolled */
+          }
+          recordRenderedOutput(generation, seq);
+        });
+        return;
+      }
+      term.write(data, () => recordRenderedOutput(generation, seq));
+    };
+
+    // Register replay/write surface for the batching pipeline. The sequence
+    // advances only from xterm's parsed-write callback, never on IPC receipt.
     const handle = {
       paneId: pane.id,
-      write: (data: string) => {
-        if (useTerminalStore.getState().scrollLocked[pane.id]) {
-          // stop-scroll trigger action: keep the viewport where the user left
-          // it even while output keeps flowing.
-          const buffer = term.buffer.active;
-          const y = buffer.viewportY;
-          term.write(data, () => {
-            try {
-              term.scrollToLine(y);
-            } catch {
-              /* buffer scrolled */
-            }
-          });
-          return;
-        }
-        term.write(data);
-      },
-      replay: (chunks: { data: string }[]) => chunks.forEach((c) => term.write(c.data)),
+      write: writeOutput,
+      replay: (chunks: { data: string; seq: number; generation: number }[]) =>
+        chunks.forEach((chunk) => writeOutput(chunk.data, chunk.seq, chunk.generation)),
       truncatedNotice: () => term.write(`\r\n\x1b[33m${t("truncatedNotice")}\x1b[0m\r\n`),
     };
     registerTerminal(handle);
 
-    const isAgentPane = () => {
-      if (pane.agentKind || useTerminalStore.getState().agentStatus[pane.id]) return true;
-      const current = useAppStore.getState().sessions.find((item) => item.id === session.id);
-      return !!current && !!layoutPanes(current.layout).find((item) => item.id === pane.id)?.agentKind;
-    };
-    const screenObserver = createAgentScreenObserver(
-      () => readAgentScreen(term),
-      (screen) => ptyObserveScreen(pane.id, screen),
-    );
-    const writeParsedSub = term.onWriteParsed(() => {
-      if (isAgentPane()) screenObserver.schedule();
-    });
-    let agentKnown = isAgentPane();
-    const unsubAgentRecognition = useTerminalStore.subscribe(() => {
-      const nextAgentKnown = isAgentPane();
-      if (nextAgentKnown && !agentKnown) screenObserver.schedule();
-      agentKnown = nextAgentKnown;
-    });
+    let unsubAgentRecognition = () => {};
+    if (!agentKnown) {
+      unsubAgentRecognition = useTerminalStore.subscribe(
+        (state) => state.agentStatus[pane.id],
+        (status) => {
+          if (!status) return;
+          agentKnown = true;
+          screenObserver.schedule();
+          unsubAgentRecognition();
+        },
+      );
+    }
 
     // Input: direct, unbatched. Sync-input fans out to the whole session.
     // Guard against disposed terminals still receiving key events briefly.
-    let inputAlive = true;
     const inputSub = term.onData((data) => {
       if (!inputAlive) return;
       const sess = useAppStore.getState().sessions.find((s) => s.id === session.id);
@@ -273,7 +299,6 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       inputSub.dispose();
       bellSub.dispose();
       renderSub.dispose();
-      writeParsedSub.dispose();
       unsubAgentRecognition();
       screenObserver.dispose();
       textarea?.removeEventListener("focus", handleTerminalFocus);

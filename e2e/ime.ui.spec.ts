@@ -296,7 +296,7 @@ test("long Chinese composition stays inside the terminal at the last column", as
   await page.evaluate(() => {
     (window as unknown as { __emitTauri: (event: string, payload: unknown) => void }).__emitTauri(
       "pty://output",
-      { chunks: [{ paneId: "pane-ime", seq: 1, data: "\u001b[999C" }] },
+      { chunks: [{ paneId: "pane-ime", generation: 1, seq: 1, data: "\u001b[999C" }] },
     );
   });
   await page.waitForTimeout(50);
@@ -349,7 +349,7 @@ test("active Chinese composition stays bounded when the terminal narrows", async
   await page.evaluate(() => {
     (window as unknown as { __emitTauri: (event: string, payload: unknown) => void }).__emitTauri(
       "pty://output",
-      { chunks: [{ paneId: "pane-ime", seq: 1, data: "\u001b[70C" }] },
+      { chunks: [{ paneId: "pane-ime", generation: 1, seq: 1, data: "\u001b[70C" }] },
     );
   });
   await page.waitForTimeout(50);
@@ -571,7 +571,7 @@ test("terminal canvas uses the deep-space monochrome surface", async ({ page }) 
   await page.evaluate(() => {
     (window as unknown as { __emitTauri: (event: string, payload: unknown) => void }).__emitTauri(
       "pty://output",
-      { chunks: [{ paneId: "pane-ime", seq: 1, data: "PS C:\\workspace\\ime> npm test\r\n33 tests passed\r\nPS C:\\workspace\\ime> " }] },
+      { chunks: [{ paneId: "pane-ime", generation: 1, seq: 1, data: "PS C:\\workspace\\ime> npm test\r\n33 tests passed\r\nPS C:\\workspace\\ime> " }] },
     );
   });
   await page.waitForTimeout(100);

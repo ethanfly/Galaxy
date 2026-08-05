@@ -12,7 +12,8 @@ use parking_lot::Mutex;
 use serde::Serialize;
 
 use super::agent_status::{
-    infer_screen_observation, infer_stream_observation, AgentStateMachine, AgentTransition,
+    infer_screen_observation, infer_stream_observation, AgentObservation, AgentStateMachine,
+    AgentTransition,
 };
 use super::backend::{PtyBackend, PtyProcess, PtySpec};
 use super::decode::StreamDecoder;
@@ -32,10 +33,24 @@ const MAX_DRAIN_PER_WINDOW: usize = 256;
 /// history records the last command without waiting for the next Enter.
 const HEURISTIC_IDLE_FLUSH: Duration = Duration::from_millis(900);
 
+fn take_agent_stream_evidence(pending: &mut String) -> String {
+    let evidence = pending.clone();
+    if let Some(carry_start) = pending
+        .char_indices()
+        .rev()
+        .find(|(_, character)| matches!(character, '\r' | '\n'))
+        .map(|(index, character)| index + character.len_utf8())
+    {
+        pending.drain(..carry_start);
+    }
+    evidence
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaneChunk {
     pub pane_id: String,
+    pub generation: u64,
     pub seq: u64,
     pub data: String,
 }
@@ -50,6 +65,7 @@ pub struct OutputBatch {
 #[serde(rename_all = "camelCase")]
 pub struct ReplayDto {
     pub pane_id: String,
+    pub generation: u64,
     pub truncated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from_seq: Option<u64>,
@@ -88,7 +104,7 @@ struct PaneCtx {
     agent_kind: Option<AgentKind>,
     ring: RingBuffer,
     tracker: PaneTracker,
-    tail: String,
+    agent_stream_pending: String,
     trigger_line: String,
     /// Typed command buffer; ignores focus/CSI sequences from xterm onData.
     input: InputLineTracker,
@@ -134,6 +150,7 @@ enum PtyMsg {
         pane_id: String,
         generation: u64,
         screen: String,
+        rendered_seq: u64,
         observed_at: Instant,
     },
 }
@@ -249,7 +266,7 @@ impl PtyManager {
                 agent_kind,
                 ring: RingBuffer::new(RING_BYTE_CAP, RING_CHUNK_CAP),
                 tracker: PaneTracker::default(),
-                tail: String::new(),
+                agent_stream_pending: String::new(),
                 trigger_line: String::new(),
                 input: InputLineTracker::default(),
                 agent_state: AgentStateMachine::default(),
@@ -491,7 +508,13 @@ impl PtyManager {
 
     /// Submit a small snapshot of the terminal's parsed, rendered screen.
     /// Observation is best-effort and never blocks PTY input/output.
-    pub fn observe_screen(&self, pane_id: &str, screen: String) -> Result<(), AppError> {
+    pub fn observe_screen(
+        &self,
+        pane_id: &str,
+        screen: String,
+        rendered_generation: u64,
+        rendered_seq: u64,
+    ) -> Result<(), AppError> {
         if screen.len() > MAX_SCREEN_OBSERVATION_BYTES {
             return Err(AppError::InvalidInput(
                 "Agent screen observation exceeds 4096 bytes".into(),
@@ -506,11 +529,15 @@ impl PtyManager {
         if !is_agent {
             return Ok(());
         }
+        if rendered_generation != generation {
+            return Ok(());
+        }
         self.tx
             .send(PtyMsg::ScreenObserved {
                 pane_id: pane_id.to_string(),
-                generation,
+                generation: rendered_generation,
                 screen,
+                rendered_seq,
                 observed_at: Instant::now(),
             })
             .map_err(|_| AppError::Pty("PTY aggregator is unavailable".into()))
@@ -545,32 +572,56 @@ impl PtyManager {
         let Some(ctx) = panes.get(pane_id) else {
             return ReplayDto {
                 pane_id: pane_id.into(),
+                generation: 0,
                 truncated: false,
                 from_seq: None,
                 chunks: vec![],
             };
         };
+        Self::replay_dto(pane_id, ctx, after_seq)
+    }
+
+    pub fn replay_generation(
+        &self,
+        pane_id: &str,
+        after_seq: u64,
+        expected_generation: u64,
+    ) -> Result<ReplayDto, AppError> {
+        let panes = self.panes.lock();
+        let ctx = panes
+            .get(pane_id)
+            .ok_or_else(|| AppError::NotFound(format!("pane {pane_id}")))?;
+        if ctx.generation != expected_generation {
+            return Err(AppError::Pty("PTY generation changed during replay".into()));
+        }
+        Ok(Self::replay_dto(pane_id, ctx, after_seq))
+    }
+
+    fn replay_dto(pane_id: &str, ctx: &PaneCtx, after_seq: u64) -> ReplayDto {
         match ctx.ring.replay(after_seq) {
             Replay::Chunks(chunks) => ReplayDto {
                 pane_id: pane_id.into(),
+                generation: ctx.generation,
                 truncated: false,
                 from_seq: None,
-                chunks: Self::to_dto(pane_id, chunks),
+                chunks: Self::to_dto(pane_id, ctx.generation, chunks),
             },
             Replay::Truncated { from_seq, chunks } => ReplayDto {
                 pane_id: pane_id.into(),
+                generation: ctx.generation,
                 truncated: true,
                 from_seq: Some(from_seq),
-                chunks: Self::to_dto(pane_id, chunks),
+                chunks: Self::to_dto(pane_id, ctx.generation, chunks),
             },
         }
     }
 
-    fn to_dto(pane_id: &str, chunks: Vec<RingChunk>) -> Vec<PaneChunk> {
+    fn to_dto(pane_id: &str, generation: u64, chunks: Vec<RingChunk>) -> Vec<PaneChunk> {
         chunks
             .into_iter()
             .map(|c| PaneChunk {
                 pane_id: pane_id.to_string(),
+                generation,
                 seq: c.seq,
                 data: c.data,
             })
@@ -581,7 +632,7 @@ impl PtyManager {
         self.panes
             .lock()
             .get(pane_id)
-            .map(|c| c.tail.clone())
+            .map(|c| c.agent_stream_pending.clone())
             .unwrap_or_default()
     }
 
@@ -709,7 +760,6 @@ impl PtyManager {
         let mut lifecycle = Vec::new();
         let mut injects: Vec<(String, u64, String)> = Vec::new();
         let mut detections: Vec<(String, u64, AgentKind)> = Vec::new();
-        let mut screens: Vec<(String, u64, String, Instant)> = Vec::new();
         for m in msgs {
             match m {
                 PtyMsg::Output {
@@ -754,12 +804,7 @@ impl PtyManager {
                     generation,
                     kind,
                 } => detections.push((pane_id.clone(), *generation, *kind)),
-                PtyMsg::ScreenObserved {
-                    pane_id,
-                    generation,
-                    screen,
-                    observed_at,
-                } => screens.push((pane_id.clone(), *generation, screen.clone(), *observed_at)),
+                PtyMsg::ScreenObserved { .. } => {}
             }
         }
 
@@ -771,8 +816,11 @@ impl PtyManager {
         Self::contain_aggregator_panic("output batch", || {
             Self::process_output_batch(&order, &grouped, panes, triggers, &mut batch, &mut sides);
         });
-        Self::contain_aggregator_panic("screen observation", || {
-            Self::process_screen_observations(&screens, panes, &mut sides);
+        // Screen observations carry xterm's rendered sequence watermark.
+        // Output batching above advances the ring first, so a snapshot cannot
+        // claim causality over output that the frontend has not rendered yet.
+        Self::contain_aggregator_panic("agent evidence", || {
+            Self::process_agent_evidence_in_order(msgs, panes, &mut sides);
         });
         Self::dispatch_side_effects(sink, sides);
         if !batch.chunks.is_empty() {
@@ -884,14 +932,84 @@ impl PtyManager {
         }
     }
 
-    fn process_screen_observations(
-        screens: &[(String, u64, String, Instant)],
+    fn process_agent_evidence_in_order(
+        msgs: &[PtyMsg],
         panes: &Arc<Mutex<HashMap<String, PaneCtx>>>,
         sides: &mut Vec<PaneSideEffect>,
     ) {
         let mut panes_guard = panes.lock();
-        for (pane_id, generation, screen, observed_at) in screens {
-            let Some(ctx) = panes_guard.get_mut(pane_id) else {
+        let mut order: Vec<(String, u64)> = Vec::new();
+        let mut grouped: HashMap<(String, u64), String> = HashMap::new();
+
+        for message in msgs {
+            match message {
+                PtyMsg::Output {
+                    pane_id,
+                    generation,
+                    data,
+                } => {
+                    let key = (pane_id.clone(), *generation);
+                    grouped
+                        .entry(key.clone())
+                        .and_modify(|_| {})
+                        .or_insert_with(|| {
+                            order.push(key);
+                            String::new()
+                        })
+                        .push_str(data);
+                }
+                PtyMsg::ScreenObserved {
+                    pane_id,
+                    generation,
+                    screen,
+                    rendered_seq,
+                    observed_at,
+                } => {
+                    Self::process_agent_stream_group(&order, &grouped, &mut panes_guard, sides);
+                    order.clear();
+                    grouped.clear();
+
+                    let Some(ctx) = panes_guard.get_mut(pane_id) else {
+                        continue;
+                    };
+                    if ctx.generation != *generation {
+                        continue;
+                    }
+                    // The snapshot is trustworthy only for the exact output
+                    // sequence xterm had parsed when it was read. Output for
+                    // this window is already in the ring but cannot yet have
+                    // reached xterm, so this also rejects either same-window
+                    // message order without guessing from channel ordering.
+                    if *rendered_seq != ctx.ring.latest_seq() {
+                        continue;
+                    }
+                    let Some(kind) = ctx.agent_kind else {
+                        continue;
+                    };
+                    let observation = infer_screen_observation(kind, screen);
+                    if observation != AgentObservation::Unknown {
+                        ctx.agent_stream_pending.clear();
+                    }
+                    if let Some(transition) = ctx.agent_state.observe(observation, *observed_at) {
+                        sides.push(Self::agent_side_effect(pane_id, ctx, transition));
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Self::process_agent_stream_group(&order, &grouped, &mut panes_guard, sides);
+    }
+
+    fn process_agent_stream_group(
+        order: &[(String, u64)],
+        grouped: &HashMap<(String, u64), String>,
+        panes: &mut HashMap<String, PaneCtx>,
+        sides: &mut Vec<PaneSideEffect>,
+    ) {
+        for key in order {
+            let (pane_id, generation) = key;
+            let Some(ctx) = panes.get_mut(pane_id) else {
                 continue;
             };
             if ctx.generation != *generation {
@@ -900,9 +1018,26 @@ impl PtyManager {
             let Some(kind) = ctx.agent_kind else {
                 continue;
             };
-            let observation = infer_screen_observation(kind, screen);
-            if let Some(transition) = ctx.agent_state.observe(observation, *observed_at) {
-                sides.push(Self::agent_side_effect(pane_id, ctx, transition));
+            let Some(data) = grouped.get(key) else {
+                continue;
+            };
+
+            let plain = strip_ansi(data);
+            push_tail(&mut ctx.agent_stream_pending, &plain);
+            let now = Instant::now();
+            let stream_due = ctx
+                .last_stream_observed_at
+                .map(|at| now.saturating_duration_since(at) >= STATUS_THROTTLE)
+                .unwrap_or(true);
+            if stream_due {
+                ctx.last_stream_observed_at = Some(now);
+                let evidence = take_agent_stream_evidence(&mut ctx.agent_stream_pending);
+                if let Some(transition) = ctx
+                    .agent_state
+                    .observe(infer_stream_observation(kind, &evidence), now)
+                {
+                    sides.push(Self::agent_side_effect(pane_id, ctx, transition));
+                }
             }
         }
     }
@@ -947,6 +1082,7 @@ impl PtyManager {
                 let chunk = ctx.ring.push(data.clone());
                 batch.chunks.push(PaneChunk {
                     pane_id: pane_id.clone(),
+                    generation: *generation,
                     seq: chunk.seq,
                     data: chunk.data.clone(),
                 });
@@ -973,27 +1109,10 @@ impl PtyManager {
                     }
                 }
 
-                let plain = strip_ansi(&chunk.data);
-                push_tail(&mut ctx.tail, &plain);
                 if !trigger_list.is_empty() {
+                    let plain = strip_ansi(&chunk.data);
                     ctx.trigger_line.push_str(&plain);
                     Self::eval_triggers(pane_id, ctx, &trigger_list, sides);
-                }
-                if let Some(kind) = ctx.agent_kind {
-                    let now = Instant::now();
-                    let stream_due = ctx
-                        .last_stream_observed_at
-                        .map(|at| now.saturating_duration_since(at) >= STATUS_THROTTLE)
-                        .unwrap_or(true);
-                    if stream_due {
-                        ctx.last_stream_observed_at = Some(now);
-                        if let Some(transition) = ctx
-                            .agent_state
-                            .observe(infer_stream_observation(kind, &ctx.tail), now)
-                        {
-                            sides.push(Self::agent_side_effect(pane_id, ctx, transition));
-                        }
-                    }
                 }
             }
         }
@@ -1232,5 +1351,107 @@ impl PtyManager {
 impl Drop for PtyManager {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn agent_pane() -> PaneCtx {
+        let mut pane = PaneCtx {
+            generation: 1,
+            session_id: "session".into(),
+            project_id: "project".into(),
+            agent_kind: Some(AgentKind::Codex),
+            ring: RingBuffer::new(RING_BYTE_CAP, RING_CHUNK_CAP),
+            tracker: PaneTracker::default(),
+            agent_stream_pending: String::new(),
+            trigger_line: String::new(),
+            input: InputLineTracker::default(),
+            agent_state: AgentStateMachine::default(),
+            last_stream_observed_at: None,
+            trigger_cooldowns: HashMap::new(),
+            exit_code: None,
+        };
+        pane.agent_state
+            .observe(AgentObservation::Working, Instant::now());
+        pane
+    }
+
+    #[derive(Default)]
+    struct EvidenceSink {
+        statuses: Mutex<Vec<AgentStatus>>,
+    }
+
+    impl PtyEventSink for EvidenceSink {
+        fn output(&self, _batch: &OutputBatch) {}
+        fn exit(&self, _pane_id: &str, _code: Option<i32>) {}
+        fn title(&self, _pane_id: &str, _session_id: &str, _title: &str) {}
+        fn block_completed(&self, _block: &crate::core::models::CommandBlock) {}
+        fn agent_status(
+            &self,
+            _pane_id: &str,
+            _session_id: &str,
+            _kind: AgentKind,
+            status: AgentStatus,
+        ) {
+            self.statuses.lock().push(status);
+        }
+        fn trigger_fired(&self, _fire: &TriggerFire) {}
+        fn pty_error(&self, _pane_id: &str, _message: &str) {}
+    }
+
+    #[test]
+    fn rendered_watermark_rejects_a_screen_in_either_same_window_order() {
+        for screen_first in [false, true] {
+            let pane_id = "pane".to_string();
+            let mut map = HashMap::new();
+            map.insert(pane_id.clone(), agent_pane());
+            let panes = Arc::new(Mutex::new(map));
+            let sink = Arc::new(EvidenceSink::default());
+            let sink_dyn: Arc<dyn PtyEventSink> = sink.clone();
+            let processes = Arc::new(Mutex::new(HashMap::new()));
+            let triggers = Arc::new(Mutex::new(Vec::new()));
+            let mut pending_exits = HashMap::new();
+            let mut reader_eofs = HashSet::new();
+            let observed_at = Instant::now();
+            let output = PtyMsg::Output {
+                pane_id: pane_id.clone(),
+                generation: 1,
+                data: "ordinary output\r\n".into(),
+            };
+            let screen = PtyMsg::ScreenObserved {
+                pane_id,
+                generation: 1,
+                screen: ">>".into(),
+                rendered_seq: 0,
+                observed_at,
+            };
+            let messages = if screen_first {
+                vec![screen, output]
+            } else {
+                vec![output, screen]
+            };
+            PtyManager::process_window(
+                &messages,
+                &sink_dyn,
+                &panes,
+                &processes,
+                &triggers,
+                &mut pending_exits,
+                &mut reader_eofs,
+            );
+
+            assert!(
+                !sink.statuses.lock().contains(&AgentStatus::Idle),
+                "stale screen produced an Agent side effect for order={screen_first}"
+            );
+            let panes_guard = panes.lock();
+            let pane = panes_guard.get("pane").unwrap();
+            assert_eq!(pane.ring.latest_seq(), 1);
+            assert_eq!(pane.agent_state.stable(), AgentStatus::Working);
+            drop(panes_guard);
+        }
     }
 }

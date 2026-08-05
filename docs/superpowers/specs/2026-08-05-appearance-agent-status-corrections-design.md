@@ -88,7 +88,7 @@ xterm is constructed with `cursorBlink: false`. Cursor behavior is not tied to A
 
 After xterm parses writes for an Agent pane, `TerminalView` schedules a throttled observation and a trailing settled observation. It reads only the final rendered rows around the active screen footer from `term.buffer.active`, normalizes insignificant whitespace, and caps the snapshot at 4 KiB.
 
-The frontend sends the snapshot using a dedicated typed IPC wrapper and Tauri command. The command accepts only `paneId` and rendered text, validates the pane through `PtyManager`, and exposes no generic process or filesystem capability.
+The frontend sends the snapshot using a dedicated typed IPC wrapper and Tauri command. The command accepts only `paneId`, rendered text, `renderedGeneration`, and `renderedSeq`, validates them through `PtyManager`, and exposes no generic process or filesystem capability.
 
 Observations are limited to Agent panes, no more frequent than every 250ms while output changes, with one trailing observation after 600ms. Active duplicate snapshots are suppressed, but the trailing observation may repeat an unchanged screen so the backend can confirm a stable Idle candidate. Snapshot text is used in memory only and must never be persisted or logged.
 
@@ -127,13 +127,29 @@ Settings draft -> uiStore preview -> effective appearance
                                    -> document root UI font
                                    -> xterm font + fit + PTY resize
 
-PTY output -> xterm parser -> rendered footer snapshot
-                            -> pty_observe_screen IPC
+PTY output(generation, seq) -> ordered pane delivery -> xterm parser
+                            -> rendered footer snapshot
+                            -> pty_observe_screen(screen, generation, renderedSeq) IPC
                             -> Rust classifier
                             -> per-pane stable state machine
                             -> agent://status
                             -> at-most-once system notification
 ```
+
+`renderedGeneration` and `renderedSeq` identify the highest backend `PaneChunk`
+whose xterm write callback has completed when the snapshot is read. Rust accepts
+an observation only when both generation and sequence match the current pane.
+A snapshot that
+arrives in the same scheduling window as newer PTY output is therefore ignored:
+the output has already entered the backend ring but cannot yet be present in the
+screen the frontend captured. This equality check is the causal barrier for
+both `Output -> ScreenObserved` and `ScreenObserved -> Output` channel orders.
+
+Gap replay is serialized per pane. Later live chunks remain buffered until the
+missing range arrives, then all chunks are deduplicated and submitted to xterm
+in strict sequence order. Replay requests carry the expected PTY generation;
+responses from an older lifecycle are discarded, and output received before
+xterm registration is drained when the terminal handle becomes available.
 
 ## 8. Testing Strategy
 
@@ -148,6 +164,13 @@ All production changes follow red-green-refactor with a failing regression test 
 - Terminal construction disables cursor blinking.
 - Effective terminal size changes update xterm and trigger fit/resize.
 - Screen observations are capped, throttled, and restricted to Agent panes.
+- Screen observations carry the xterm rendered sequence and unchanged screens
+  are resent when that sequence advances, so the backend can reject stale
+  snapshots without guessing from IPC arrival order.
+- Output and replay DTOs carry a PTY generation; delayed replay and screen
+  observations from a replaced process cannot affect its successor.
+- Gap recovery holds later live chunks and writes every sequence exactly once
+  in order, including output received before xterm registration.
 
 ### Rust unit tests
 
@@ -159,6 +182,10 @@ All production changes follow red-green-refactor with a failing regression test 
 - One working epoch emits at most one completion notification.
 - A new working epoch may emit one new completion notification.
 - Agent detection cannot deliver a stale `Idle` after a newer `Working` transition.
+- A stale rendered-screen watermark cannot emit an `Idle` or `Blocked` side
+  effect after newer PTY output has entered the ring.
+- Reusing a pane ID rejects screen observations and replay requests from the
+  previous PTY generation even when sequence numbers collide.
 
 ### UI integration tests
 

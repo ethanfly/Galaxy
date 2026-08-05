@@ -75,8 +75,12 @@ pub async fn pty_replay(
     state: State<'_, Arc<AppState>>,
     pane_id: String,
     after_seq: u64,
+    expected_generation: u64,
 ) -> CmdResult<ReplayDto> {
-    Ok(state.pty().replay(&pane_id, after_seq))
+    state
+        .pty()
+        .replay_generation(&pane_id, after_seq, expected_generation)
+        .cmd()
 }
 
 #[tauri::command]
@@ -84,8 +88,13 @@ pub async fn pty_observe_screen(
     state: State<'_, Arc<AppState>>,
     pane_id: String,
     screen: String,
+    rendered_generation: u64,
+    rendered_seq: u64,
 ) -> CmdResult<()> {
-    state.pty().observe_screen(&pane_id, screen).cmd()
+    state
+        .pty()
+        .observe_screen(&pane_id, screen, rendered_generation, rendered_seq)
+        .cmd()
 }
 
 #[tauri::command]

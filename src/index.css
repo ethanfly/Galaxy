@@ -194,14 +194,14 @@ body, #root {
   top: 2px;
   right: 1px;
   min-width: 12px;
-  height: 12px;
-  padding: 0 3px;
+  min-height: 12px;
+  padding: 1px 3px;
   border-radius: 6px;
   background: var(--amber-400);
   color: var(--space-0);
   font-size: var(--fs-micro);
   font-weight: 700;
-  line-height: 12px;
+  line-height: 1;
   text-align: center;
 }
 .window-controls {
@@ -404,10 +404,11 @@ body, #root {
   flex: none;
   font-size: var(--fs-caption);
   font-family: var(--font-mono);
-  padding: 0 5px;
+  min-height: 15px;
+  padding: 2px 5px;
   border: 1px solid currentColor;
   border-radius: 2px;
-  line-height: 15px;
+  line-height: 1;
   position: relative;
   z-index: 1;
   box-shadow: none;
@@ -430,6 +431,10 @@ body, #root {
 }
 
 /* ---------------------------------------------------------- buttons & inputs */
+button {
+  font: inherit;
+  letter-spacing: 0;
+}
 .btn {
   display: inline-flex;
   align-items: center;
@@ -552,12 +557,14 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
 }
 .pane-cell.focused { border-color: var(--border-strong); }
 .pane-cell .pane-chrome {
-  height: 22px;
+  min-height: 22px;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 6px;
+  padding: 2px 6px;
   font-size: var(--fs-small);
+  line-height: 1.2;
   color: var(--text-lo);
   background: var(--space-1);
   border-bottom: 1px solid var(--border-subtle);
@@ -618,19 +625,25 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
 .panel-tabs {
   display: flex;
   align-items: stretch;
-  height: 30px;
+  height: max(30px, calc(1em + 14px));
   border-bottom: 1px solid var(--border-subtle);
   flex: none;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .panel-tabs button[role="tab"] {
-  flex: 1;
+  flex: 0 0 auto;
   border: 0;
   background: transparent;
   color: var(--text-lo);
   cursor: pointer;
   font-size: var(--fs-body-small);
+  line-height: 1;
+  padding: 0 10px;
+  white-space: nowrap;
   border-bottom: 2px solid transparent;
-  min-width: 0;
+  box-sizing: border-box;
 }
 .panel-tabs button[role="tab"].active {
   color: var(--text-hi);
@@ -643,6 +656,9 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
   margin: 1px 2px 0;
   border-radius: 3px;
   color: var(--text-lo);
+  position: sticky;
+  right: 0;
+  background: var(--space-0);
 }
 .panel-tabs .panel-close:hover {
   color: var(--text-hi);
@@ -834,8 +850,9 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
   color: var(--accent-main);
   border: 1px solid var(--accent-border);
   border-radius: 2px;
-  padding: 0 4px;
-  line-height: 16px;
+  min-height: 16px;
+  padding: 2px 4px;
+  line-height: 1;
 }
 .git-file {
   display: flex;
@@ -1205,7 +1222,7 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
 .workspace-switcher {
   display: flex;
   align-self: center;
-  height: 26px;
+  min-height: max(26px, calc(1em + 8px));
   padding: 2px;
   border-radius: 4px;
   background: var(--space-3);
@@ -1219,6 +1236,7 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
   color: var(--text-lo);
   font: inherit;
   font-size: var(--fs-body-small);
+  line-height: 1;
   cursor: pointer;
 }
 .workspace-switcher button.active { background: var(--accent-surface); color: var(--accent-soft); }

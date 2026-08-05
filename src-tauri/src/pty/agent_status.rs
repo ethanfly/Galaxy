@@ -138,7 +138,7 @@ pub fn infer_stream_observation(kind: AgentKind, text: &str) -> AgentObservation
     if lines.iter().any(|line| is_working_line(kind, line)) {
         return AgentObservation::Working;
     }
-    if lines.iter().any(|line| is_blocked_line(kind, line)) {
+    if has_blocked_evidence(kind, &lines) {
         return AgentObservation::Blocked;
     }
     AgentObservation::Unknown
@@ -149,7 +149,7 @@ pub fn infer_screen_observation(kind: AgentKind, screen: &str) -> AgentObservati
     if lines.iter().any(|line| is_working_line(kind, line)) {
         return AgentObservation::Working;
     }
-    if lines.iter().any(|line| is_blocked_line(kind, line)) {
+    if has_blocked_evidence(kind, &lines) {
         return AgentObservation::Blocked;
     }
     if lines.iter().any(|line| is_idle_line(kind, line)) {
@@ -209,18 +209,46 @@ fn is_working_line(kind: AgentKind, line: &str) -> bool {
     }
 }
 
+fn has_blocked_evidence(kind: AgentKind, lines: &[&str]) -> bool {
+    if kind == AgentKind::Codex {
+        let recent: Vec<String> = lines
+            .iter()
+            .rev()
+            .filter(|line| !line.trim().is_empty())
+            .take(8)
+            .map(|line| prompt_text(line))
+            .collect();
+        let has_header = recent.iter().any(|line| {
+            line.starts_with("allow command?")
+                || line.starts_with("do you want to run")
+                || line.starts_with("would you like to run")
+        });
+        let has_confirmation = recent.iter().any(|line| {
+            line.contains("[y/n]")
+                || line.contains("(y/n)")
+                || line.starts_with("press enter to confirm")
+                || line.starts_with("1. yes")
+                || line.starts_with("yes, proceed")
+        });
+        return has_header && has_confirmation;
+    }
+    lines.iter().any(|line| is_blocked_line(kind, line))
+}
+
+fn prompt_text(line: &str) -> String {
+    status_text(line)
+        .trim_start_matches(|character: char| {
+            matches!(character, '>' | '\u{00bb}' | '\u{203a}' | '\u{276f}')
+        })
+        .trim_start()
+        .to_string()
+}
+
 fn is_blocked_line(kind: AgentKind, line: &str) -> bool {
     let lower = line.trim().to_lowercase();
     let markers: &[&str] = match kind {
         AgentKind::ClaudeCode => &["do you want to proceed", "permission to use", "1. yes"],
-        AgentKind::Codex => &[
-            "allow command?",
-            "allow?",
-            "press enter to confirm",
-            "do you want to run",
-            "[y/n]",
-            "(y/n)",
-        ],
+        AgentKind::Codex => &[],
         AgentKind::OpenCode => &["allow once", "permission", "confirm"],
         AgentKind::Gemini => &["waiting for approval", "approve", "[y/n]"],
         AgentKind::Copilot => &["approve this", "allow?", "confirm", "[y/n]"],
@@ -313,6 +341,29 @@ mod tests {
         assert_eq!(
             infer_screen_observation(AgentKind::Codex, screen),
             AgentObservation::Working
+        );
+    }
+
+    #[test]
+    fn codex_blocked_requires_a_structured_prompt_not_marker_like_output() {
+        let source_output =
+            ">> Continue\nlet choice = \"[y/n]\";\n// press enter to confirm in the demo";
+        assert_eq!(
+            infer_screen_observation(AgentKind::Codex, source_output),
+            AgentObservation::Idle
+        );
+
+        let approval = "Would you like to run the following command?\n\
+                        cargo test\n\
+                        > 1. Yes, proceed\n\
+                        Press enter to confirm or esc to cancel";
+        assert_eq!(
+            infer_screen_observation(AgentKind::Codex, approval),
+            AgentObservation::Blocked
+        );
+        assert_eq!(
+            infer_screen_observation(AgentKind::Codex, "Allow command? [y/N]"),
+            AgentObservation::Blocked
         );
     }
 

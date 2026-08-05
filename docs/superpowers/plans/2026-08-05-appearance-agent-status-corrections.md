@@ -400,13 +400,20 @@ Use `TextEncoder` to measure bytes and `TextDecoder` after advancing past UTF-8 
 In `client.ts`:
 
 ```ts
-export const ptyObserveScreen = (paneId: string, screen: string) =>
-  call<void>("pty_observe_screen", { paneId, screen });
+export const ptyObserveScreen = (
+  paneId: string,
+  screen: string,
+  renderedGeneration: number,
+  renderedSeq: number,
+) => call<void>("pty_observe_screen", { paneId, screen, renderedGeneration, renderedSeq });
 ```
 
 - [ ] **Step 6: Attach observation after xterm parsing**
 
-In `TerminalView`, register `term.onWriteParsed(...)` after the terminal handle is created. Each scheduled read must dynamically check current pane metadata so restored and newly detected Agents both work:
+In `TerminalView`, advance a pane-local rendered sequence only from each xterm
+write callback, and include that sequence with the screen snapshot. Each
+scheduled read must dynamically check current pane metadata so restored and
+newly detected Agents both work:
 
 ```ts
 const isAgentPane = () => {
@@ -604,7 +611,13 @@ Replace `PaneCtx.last_status`/`last_status_at` with `AgentStateMachine` plus a s
 
 ```rust
 AgentDetected { pane_id: String, generation: u64, kind: AgentKind },
-ScreenObserved { pane_id: String, generation: u64, screen: String, observed_at: Instant },
+ScreenObserved {
+    pane_id: String,
+    generation: u64,
+    screen: String,
+    rendered_seq: u64,
+    observed_at: Instant,
+},
 ```
 
 When keyboard input detects an Agent, update `ctx.agent_kind` under the pane lock, then enqueue `AgentDetected`; never construct `PaneSideEffect::Agent` with a captured status.
@@ -612,7 +625,13 @@ When keyboard input detects an Agent, update `ctx.agent_kind` under the pane loc
 - [ ] **Step 4: Add the manager observation API**
 
 ```rust
-pub fn observe_screen(&self, pane_id: &str, screen: String) -> Result<(), AppError> {
+pub fn observe_screen(
+    &self,
+    pane_id: &str,
+    screen: String,
+    rendered_generation: u64,
+    rendered_seq: u64,
+) -> Result<(), AppError> {
     if screen.len() > MAX_SCREEN_OBSERVATION_BYTES {
         return Err(AppError::InvalidInput("Agent screen observation exceeds 4096 bytes".into()));
     }
@@ -622,10 +641,14 @@ pub fn observe_screen(&self, pane_id: &str, screen: String) -> Result<(), AppErr
     if !is_agent {
         return Ok(());
     }
+    if rendered_generation != generation {
+        return Ok(());
+    }
     self.tx.send(PtyMsg::ScreenObserved {
         pane_id: pane_id.to_string(),
-        generation,
+        generation: rendered_generation,
         screen,
+        rendered_seq,
         observed_at: Instant::now(),
     }).map_err(|_| AppError::Pty("PTY aggregator is unavailable".into()))
 }
@@ -639,7 +662,9 @@ Within each `process_window`:
 
 1. Dispatch matching AgentDetected messages without a status value.
 2. Process grouped PTY output and feed only `infer_stream_observation` into each pane's state machine.
-3. Process matching screen observations in receive order and feed `infer_screen_observation` into the same state machine.
+3. Process matching screen observations in receive order, but first require
+   `renderedSeq == ring.latest_seq()`; stale snapshots are dropped before
+   classification.
 4. Convert only returned transitions into `PaneSideEffect::Agent`.
 5. Process lifecycle/exit after observations.
 
@@ -655,8 +680,13 @@ pub async fn pty_observe_screen(
     state: State<'_, Arc<AppState>>,
     pane_id: String,
     screen: String,
+    rendered_generation: u64,
+    rendered_seq: u64,
 ) -> CmdResult<()> {
-    state.pty().observe_screen(&pane_id, screen).cmd()
+    state
+        .pty()
+        .observe_screen(&pane_id, screen, rendered_generation, rendered_seq)
+        .cmd()
 }
 ```
 

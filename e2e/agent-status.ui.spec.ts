@@ -148,7 +148,7 @@ test("Agent panes send a capped and throttled rendered Working screen", async ({
           ? `\u001b[999B>> Run /review on my changes\r\n* Working (1s * esc to interrupt)`
           : `\r\u001b[2K* Working (${index}s * esc to interrupt)`;
       emit("pty://output", {
-        chunks: [{ paneId: "pane-agent", seq: index, data }],
+        chunks: [{ paneId: "pane-agent", generation: 1, seq: index, data }],
       });
     }
   });
@@ -172,7 +172,12 @@ test("Agent panes send a capped and throttled rendered Working screen", async ({
       window as unknown as {
         __tauriInvokes: Array<{
           command: string;
-          args?: { paneId?: string; screen?: string };
+          args?: {
+            paneId?: string;
+            screen?: string;
+            renderedGeneration?: number;
+            renderedSeq?: number;
+          };
           at: number;
         }>;
       }
@@ -183,6 +188,8 @@ test("Agent panes send a capped and throttled rendered Working screen", async ({
   expect(observations.length).toBeLessThan(12);
   for (const observation of observations) {
     expect(observation.args?.paneId).toBe("pane-agent");
+    expect(observation.args?.renderedGeneration).toBe(1);
+    expect(observation.args?.renderedSeq).toEqual(expect.any(Number));
     expect(new TextEncoder().encode(observation.args?.screen ?? "").byteLength).toBeLessThanOrEqual(
       4096,
     );
@@ -191,7 +198,54 @@ test("Agent panes send a capped and throttled rendered Working screen", async ({
     expect(observations[index].at - observations[index - 1].at).toBeGreaterThanOrEqual(180);
   }
   const latest = observations.at(-1)?.args?.screen ?? "";
+  expect(observations.at(-1)?.args?.renderedSeq).toBe(12);
   expect(
     latest.split("\n").some((line) => /^\* Working \(.+esc to interrupt\)$/.test(line.trim())),
   ).toBe(true);
+
+  await page.evaluate(() => {
+    (
+      window as unknown as {
+        __emitTauri: (event: string, payload: unknown) => void;
+      }
+    ).__emitTauri("pty://output", {
+      chunks: [
+        {
+          paneId: "pane-agent",
+          generation: 2,
+          seq: 1,
+          data: "\r\u001b[2K* Working (restarted * esc to interrupt)",
+        },
+      ],
+    });
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          window as unknown as {
+            __tauriInvokes: Array<{
+              command: string;
+              args?: { renderedGeneration?: number; renderedSeq?: number };
+            }>;
+          }
+        ).__tauriInvokes
+          .filter((entry) => entry.command === "pty_observe_screen")
+          .at(-1)?.args?.renderedSeq,
+      ),
+    )
+    .toBe(1);
+  const restartedGeneration = await page.evaluate(() =>
+    (
+      window as unknown as {
+        __tauriInvokes: Array<{
+          command: string;
+          args?: { renderedGeneration?: number };
+        }>;
+      }
+    ).__tauriInvokes
+      .filter((entry) => entry.command === "pty_observe_screen")
+      .at(-1)?.args?.renderedGeneration,
+  );
+  expect(restartedGeneration).toBe(2);
 });

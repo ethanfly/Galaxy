@@ -91,10 +91,14 @@ export const ptyBroadcast = (sessionId: string, data: string) =>
   call<void>("pty_broadcast", { sessionId, data });
 export const ptyResize = (paneId: string, cols: number, rows: number) =>
   call<void>("pty_resize", { paneId, cols, rows });
-export const ptyReplay = (paneId: string, afterSeq: number) =>
-  call<ReplayDto>("pty_replay", { paneId, afterSeq });
-export const ptyObserveScreen = (paneId: string, screen: string) =>
-  call<void>("pty_observe_screen", { paneId, screen });
+export const ptyReplay = (paneId: string, afterSeq: number, expectedGeneration: number) =>
+  call<ReplayDto>("pty_replay", { paneId, afterSeq, expectedGeneration });
+export const ptyObserveScreen = (
+  paneId: string,
+  screen: string,
+  renderedGeneration: number,
+  renderedSeq: number,
+) => call<void>("pty_observe_screen", { paneId, screen, renderedGeneration, renderedSeq });
 export const ptyKill = (paneId: string) => call<void>("pty_kill", { paneId });
 
 // ------------------------------------------------------------------ blocks

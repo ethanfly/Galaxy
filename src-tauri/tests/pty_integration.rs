@@ -112,6 +112,16 @@ fn wait_for(deadline_ms: u64, mut cond: impl FnMut() -> bool) -> bool {
     false
 }
 
+fn observe_latest_screen(
+    manager: &PtyManager,
+    pane_id: &str,
+    screen: String,
+) -> Result<(), AppError> {
+    let replay = manager.replay(pane_id, 0);
+    let rendered_seq = replay.chunks.last().map(|chunk| chunk.seq).unwrap_or(0);
+    manager.observe_screen(pane_id, screen, replay.generation, rendered_seq)
+}
+
 #[derive(Default)]
 struct BlockingIoState {
     write_started: (Mutex<bool>, Condvar),
@@ -191,6 +201,102 @@ impl PtyBackend for BlockingBackend {
 
     fn spawn(&self, _spec: &PtySpec) -> Result<Box<dyn PtyProcess>, AppError> {
         Ok(Box::new(BlockingProcess(self.0.clone())))
+    }
+}
+
+struct OutputChannelReader {
+    receiver: mpsc::Receiver<Vec<u8>>,
+    pending: VecDeque<u8>,
+}
+
+impl Read for OutputChannelReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        while self.pending.is_empty() {
+            let next = self
+                .receiver
+                .recv()
+                .map_err(|_| std::io::Error::from(std::io::ErrorKind::UnexpectedEof))?;
+            if next.is_empty() {
+                return Ok(0);
+            }
+            self.pending.extend(next);
+        }
+        let len = buf.len().min(self.pending.len());
+        for slot in &mut buf[..len] {
+            *slot = self.pending.pop_front().expect("pending output byte");
+        }
+        Ok(len)
+    }
+}
+
+struct OutputChannelState {
+    receiver: Mutex<Option<mpsc::Receiver<Vec<u8>>>>,
+    sender: mpsc::Sender<Vec<u8>>,
+}
+
+impl OutputChannelState {
+    fn new() -> Arc<Self> {
+        let (sender, receiver) = mpsc::channel();
+        Arc::new(Self {
+            receiver: Mutex::new(Some(receiver)),
+            sender,
+        })
+    }
+}
+
+struct OutputChannelProcess(Arc<OutputChannelState>);
+
+impl PtyProcess for OutputChannelProcess {
+    fn take_reader(&self) -> Result<Box<dyn Read + Send>, AppError> {
+        let receiver = self
+            .0
+            .receiver
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or_else(|| AppError::Pty("test reader already taken".into()))?;
+        Ok(Box::new(OutputChannelReader {
+            receiver,
+            pending: VecDeque::new(),
+        }))
+    }
+
+    fn write(&self, _data: &[u8]) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn resize(&self, _cols: u16, _rows: u16) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn kill(&self) -> Result<(), AppError> {
+        let _ = self.0.sender.send(Vec::new());
+        Ok(())
+    }
+
+    fn close_transport(&self) -> Result<(), AppError> {
+        let _ = self.0.sender.send(Vec::new());
+        Ok(())
+    }
+
+    fn try_wait(&self) -> Result<Option<i32>, AppError> {
+        Ok(None)
+    }
+
+    fn pid(&self) -> Option<u32> {
+        None
+    }
+}
+
+struct OutputChannelBackend(Arc<OutputChannelState>);
+
+impl PtyBackend for OutputChannelBackend {
+    fn name(&self) -> &'static str {
+        "output-channel-test"
+    }
+
+    fn spawn(&self, _spec: &PtySpec) -> Result<Box<dyn PtyProcess>, AppError> {
+        Ok(Box::new(OutputChannelProcess(self.0.clone())))
     }
 }
 
@@ -492,7 +598,7 @@ fn agent_status_observation_validates_pane_kind_and_size() {
     );
 
     assert!(matches!(
-        manager.observe_screen("missing", ">>".into()),
+        observe_latest_screen(&manager, "missing", ">>".into()),
         Err(AppError::NotFound(_))
     ));
     manager
@@ -505,11 +611,10 @@ fn agent_status_observation_validates_pane_kind_and_size() {
             None,
         )
         .expect("spawn non-Agent pane");
-    manager
-        .observe_screen("pane-shell", ">>".into())
+    observe_latest_screen(&manager, "pane-shell", ">>".into())
         .expect("non-Agent observations are ignored");
     assert!(matches!(
-        manager.observe_screen("pane-shell", "x".repeat(4097)),
+        observe_latest_screen(&manager, "pane-shell", "x".repeat(4097)),
         Err(AppError::InvalidInput(_))
     ));
     std::thread::sleep(Duration::from_millis(50));
@@ -536,22 +641,18 @@ fn agent_status_observations_confirm_idle_and_dedupe_working_epochs() {
         .expect("spawn Agent pane");
 
     let working = ">> Run /review\n* Working (2s * esc to interrupt)";
-    manager
-        .observe_screen("pane-agent-status", working.into())
-        .unwrap();
+    observe_latest_screen(&manager, "pane-agent-status", working.into()).unwrap();
     assert!(wait_for(1_000, || sink
         .agent_events
         .lock()
         .unwrap()
         .contains(&CollectedAgentEvent::Status(AgentStatus::Working))));
     assert!(matches!(
-        manager.observe_screen("pane-agent-status", "x".repeat(4097)),
+        observe_latest_screen(&manager, "pane-agent-status", "x".repeat(4097)),
         Err(AppError::InvalidInput(_))
     ));
 
-    manager
-        .observe_screen("pane-agent-status", ">>".into())
-        .unwrap();
+    observe_latest_screen(&manager, "pane-agent-status", ">>".into()).unwrap();
     std::thread::sleep(Duration::from_millis(100));
     assert_eq!(
         sink.agent_events
@@ -563,9 +664,7 @@ fn agent_status_observations_confirm_idle_and_dedupe_working_epochs() {
         0
     );
     std::thread::sleep(Duration::from_millis(450));
-    manager
-        .observe_screen("pane-agent-status", ">>".into())
-        .unwrap();
+    observe_latest_screen(&manager, "pane-agent-status", ">>".into()).unwrap();
     assert!(wait_for(1_000, || sink
         .agent_events
         .lock()
@@ -575,12 +674,8 @@ fn agent_status_observations_confirm_idle_and_dedupe_working_epochs() {
         .count()
         == 1));
 
-    manager
-        .observe_screen("pane-agent-status", ">>".into())
-        .unwrap();
-    manager
-        .observe_screen("pane-agent-status", working.into())
-        .unwrap();
+    observe_latest_screen(&manager, "pane-agent-status", ">>".into()).unwrap();
+    observe_latest_screen(&manager, "pane-agent-status", working.into()).unwrap();
     assert!(wait_for(1_000, || sink
         .agent_events
         .lock()
@@ -589,13 +684,9 @@ fn agent_status_observations_confirm_idle_and_dedupe_working_epochs() {
         .filter(|event| **event == CollectedAgentEvent::Status(AgentStatus::Working))
         .count()
         == 2));
-    manager
-        .observe_screen("pane-agent-status", ">>".into())
-        .unwrap();
+    observe_latest_screen(&manager, "pane-agent-status", ">>".into()).unwrap();
     std::thread::sleep(Duration::from_millis(550));
-    manager
-        .observe_screen("pane-agent-status", ">>".into())
-        .unwrap();
+    observe_latest_screen(&manager, "pane-agent-status", ">>".into()).unwrap();
     assert!(wait_for(1_000, || sink
         .agent_events
         .lock()
@@ -604,6 +695,309 @@ fn agent_status_observations_confirm_idle_and_dedupe_working_epochs() {
         .filter(|event| **event == CollectedAgentEvent::Status(AgentStatus::Idle))
         .count()
         == 2));
+
+    manager.shutdown();
+}
+
+#[test]
+fn completed_agent_does_not_replay_stale_stream_working_evidence() {
+    let io = OutputChannelState::new();
+    let sink = Arc::new(CollectSink::new());
+    let manager = PtyManager::new(Arc::new(OutputChannelBackend(io.clone())), sink.clone());
+    manager
+        .spawn_pane(
+            "pane-stale-agent-status",
+            "session-1",
+            "project-1",
+            &cmd_spec(),
+            Some(AgentKind::Codex),
+            None,
+        )
+        .expect("spawn Agent pane");
+
+    observe_latest_screen(
+        &manager,
+        "pane-stale-agent-status",
+        "* Working (2s * esc to interrupt)".into(),
+    )
+    .unwrap();
+    assert!(wait_for(1_000, || sink
+        .agent_events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| **event == CollectedAgentEvent::Status(AgentStatus::Working))
+        .count()
+        == 1));
+
+    let output_before = sink.output_chars.load(Ordering::SeqCst);
+    io.sender.send(b"baseline output\r\n".to_vec()).unwrap();
+    assert!(wait_for(1_000, || sink.output_chars.load(Ordering::SeqCst)
+        > output_before));
+
+    io.sender
+        .send(b"* Working (stale throttled evidence * esc to interrupt)\r\n".to_vec())
+        .unwrap();
+    assert!(wait_for(1_000, || manager
+        .pane_tail("pane-stale-agent-status")
+        .contains("Working")));
+
+    observe_latest_screen(&manager, "pane-stale-agent-status", ">>".into()).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    io.sender
+        .send(b"ordinary output flushes the throttle window\r\n".to_vec())
+        .unwrap();
+    assert!(wait_for(1_000, || manager
+        .pane_tail("pane-stale-agent-status")
+        .is_empty()));
+    std::thread::sleep(Duration::from_millis(300));
+    observe_latest_screen(&manager, "pane-stale-agent-status", ">>".into()).unwrap();
+    assert!(wait_for(1_000, || sink
+        .agent_events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| **event == CollectedAgentEvent::Status(AgentStatus::Idle))
+        .count()
+        == 1));
+
+    io.sender
+        .send(b"ordinary later output\r\n".to_vec())
+        .unwrap();
+    assert!(
+        !wait_for(1_000, || sink
+            .agent_events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| **event == CollectedAgentEvent::Status(AgentStatus::Working))
+            .count()
+            > 1),
+        "old stream text started a duplicate Working epoch: {:?}",
+        *sink.agent_events.lock().unwrap()
+    );
+
+    manager.shutdown();
+}
+
+#[test]
+fn split_agent_status_line_survives_stream_throttle_boundaries() {
+    let io = OutputChannelState::new();
+    let sink = Arc::new(CollectSink::new());
+    let manager = PtyManager::new(Arc::new(OutputChannelBackend(io.clone())), sink.clone());
+    manager
+        .spawn_pane(
+            "pane-split-agent-status",
+            "session-1",
+            "project-1",
+            &cmd_spec(),
+            Some(AgentKind::Codex),
+            None,
+        )
+        .expect("spawn Agent pane");
+
+    let output_before = sink.output_chars.load(Ordering::SeqCst);
+    io.sender.send(b"* Work".to_vec()).unwrap();
+    assert!(wait_for(1_000, || sink.output_chars.load(Ordering::SeqCst)
+        > output_before));
+
+    io.sender
+        .send(b"ing (2s * esc to interrupt)\r\n".to_vec())
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    io.sender.send(b"ordinary output\r\n".to_vec()).unwrap();
+
+    assert!(
+        wait_for(1_000, || sink.agent_events.lock().unwrap().iter().any(
+            |event| *event == CollectedAgentEvent::Status(AgentStatus::Working)
+        )),
+        "split Working status was lost at a throttle boundary: {:?}",
+        *sink.agent_events.lock().unwrap()
+    );
+
+    manager.shutdown();
+}
+
+#[test]
+fn blocked_screen_discards_older_throttled_working_evidence() {
+    let io = OutputChannelState::new();
+    let sink = Arc::new(CollectSink::new());
+    let manager = PtyManager::new(Arc::new(OutputChannelBackend(io.clone())), sink.clone());
+    manager
+        .spawn_pane(
+            "pane-blocked-agent-status",
+            "session-1",
+            "project-1",
+            &cmd_spec(),
+            Some(AgentKind::Codex),
+            None,
+        )
+        .expect("spawn Agent pane");
+
+    observe_latest_screen(
+        &manager,
+        "pane-blocked-agent-status",
+        "* Working (2s * esc to interrupt)".into(),
+    )
+    .unwrap();
+    assert!(wait_for(1_000, || sink
+        .agent_events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(
+            |event| *event == CollectedAgentEvent::Status(AgentStatus::Working)
+        )));
+
+    let output_before = sink.output_chars.load(Ordering::SeqCst);
+    io.sender.send(b"baseline output\r\n".to_vec()).unwrap();
+    assert!(wait_for(1_000, || sink.output_chars.load(Ordering::SeqCst)
+        > output_before));
+    io.sender
+        .send(b"* Working (stale throttled evidence * esc to interrupt)\r\n".to_vec())
+        .unwrap();
+    assert!(wait_for(1_000, || manager
+        .pane_tail("pane-blocked-agent-status")
+        .contains("Working")));
+
+    observe_latest_screen(
+        &manager,
+        "pane-blocked-agent-status",
+        "Allow command? [y/N]".into(),
+    )
+    .unwrap();
+    assert!(wait_for(1_000, || sink
+        .agent_events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(
+            |event| *event == CollectedAgentEvent::Status(AgentStatus::Blocked)
+        )));
+
+    std::thread::sleep(Duration::from_millis(300));
+    io.sender.send(b"ordinary output\r\n".to_vec()).unwrap();
+    assert!(
+        !wait_for(1_000, || sink
+            .agent_events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| **event == CollectedAgentEvent::Status(AgentStatus::Working))
+            .count()
+            > 1),
+        "old stream text incorrectly resumed a blocked Agent: {:?}",
+        *sink.agent_events.lock().unwrap()
+    );
+
+    manager.shutdown();
+}
+
+#[test]
+fn screen_before_new_output_preserves_causal_agent_status_order() {
+    let io = OutputChannelState::new();
+    let sink = Arc::new(CollectSink::new());
+    let manager = PtyManager::new(Arc::new(OutputChannelBackend(io.clone())), sink.clone());
+    manager
+        .spawn_pane(
+            "pane-causal-agent-status",
+            "session-1",
+            "project-1",
+            &cmd_spec(),
+            Some(AgentKind::Codex),
+            None,
+        )
+        .expect("spawn Agent pane");
+
+    observe_latest_screen(
+        &manager,
+        "pane-causal-agent-status",
+        "* Working (2s * esc to interrupt)".into(),
+    )
+    .unwrap();
+    assert!(wait_for(1_000, || sink
+        .agent_events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(
+            |event| *event == CollectedAgentEvent::Status(AgentStatus::Working)
+        )));
+
+    let output_before = sink.output_chars.load(Ordering::SeqCst);
+    observe_latest_screen(&manager, "pane-causal-agent-status", ">>".into()).unwrap();
+    io.sender
+        .send(b"* Working (newer output * esc to interrupt)\r\n".to_vec())
+        .unwrap();
+    assert!(wait_for(1_000, || sink.output_chars.load(Ordering::SeqCst)
+        > output_before));
+
+    std::thread::sleep(Duration::from_millis(550));
+    observe_latest_screen(&manager, "pane-causal-agent-status", ">>".into()).unwrap();
+    assert!(
+        !wait_for(1_000, || sink.agent_events.lock().unwrap().iter().any(
+            |event| *event == CollectedAgentEvent::Status(AgentStatus::Idle)
+        )),
+        "a screen snapshot overrode newer output from the same batch: {:?}",
+        *sink.agent_events.lock().unwrap()
+    );
+
+    manager.shutdown();
+}
+
+#[test]
+fn stale_screen_watermark_cannot_complete_newer_working_output() {
+    let io = OutputChannelState::new();
+    let sink = Arc::new(CollectSink::new());
+    let manager = PtyManager::new(Arc::new(OutputChannelBackend(io.clone())), sink.clone());
+    manager
+        .spawn_pane(
+            "pane-screen-watermark",
+            "session-1",
+            "project-1",
+            &cmd_spec(),
+            Some(AgentKind::Codex),
+            None,
+        )
+        .expect("spawn Agent pane");
+
+    observe_latest_screen(
+        &manager,
+        "pane-screen-watermark",
+        "* Working (2s * esc to interrupt)".into(),
+    )
+    .unwrap();
+    assert!(wait_for(1_000, || sink
+        .agent_events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(
+            |event| *event == CollectedAgentEvent::Status(AgentStatus::Working)
+        )));
+
+    let output_before = sink.output_chars.load(Ordering::SeqCst);
+    io.sender
+        .send(b"newer ordinary output\r\n".to_vec())
+        .unwrap();
+    assert!(wait_for(1_000, || sink.output_chars.load(Ordering::SeqCst)
+        > output_before));
+
+    let generation = manager.replay("pane-screen-watermark", 0).generation;
+    manager
+        .observe_screen("pane-screen-watermark", ">>".into(), generation, 0)
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(550));
+    manager
+        .observe_screen("pane-screen-watermark", ">>".into(), generation, 0)
+        .unwrap();
+    assert!(
+        !wait_for(1_000, || sink.agent_events.lock().unwrap().iter().any(
+            |event| *event == CollectedAgentEvent::Status(AgentStatus::Idle)
+        )),
+        "a stale rendered screen completed newer work: {:?}",
+        *sink.agent_events.lock().unwrap()
+    );
 
     manager.shutdown();
 }
@@ -630,12 +1024,12 @@ fn agent_status_detection_is_serialized_before_newer_working_status() {
     manager
         .write_input("pane-detected-agent", "codex\r")
         .unwrap();
-    manager
-        .observe_screen(
-            "pane-detected-agent",
-            ">> Continue\n* Working (1s * esc to interrupt)".into(),
-        )
-        .unwrap();
+    observe_latest_screen(
+        &manager,
+        "pane-detected-agent",
+        ">> Continue\n* Working (1s * esc to interrupt)".into(),
+    )
+    .unwrap();
     assert!(wait_for(1_000, || sink.agent_events.lock().unwrap().len() >= 2));
     assert_eq!(
         *sink.agent_events.lock().unwrap(),
@@ -664,12 +1058,12 @@ fn agent_status_process_exit_emits_done_once() {
             None,
         )
         .unwrap();
-    manager
-        .observe_screen(
-            "pane-agent-exit",
-            ">> Continue\n* Working (1s * esc to interrupt)".into(),
-        )
-        .unwrap();
+    observe_latest_screen(
+        &manager,
+        "pane-agent-exit",
+        ">> Continue\n* Working (1s * esc to interrupt)".into(),
+    )
+    .unwrap();
     assert!(wait_for(1_000, || sink
         .agent_events
         .lock()
@@ -803,6 +1197,92 @@ fn stale_reader_eof_cannot_remove_a_restarted_pane() {
         second_generation_alive,
         "a delayed EOF from the old reader removed the replacement process"
     );
+}
+
+#[test]
+fn stale_rendered_screen_from_an_old_generation_is_ignored() {
+    let first = Arc::new(GatedReaderState::default());
+    let second = Arc::new(GatedReaderState::default());
+    let backend = Arc::new(GatedBackend(Mutex::new(VecDeque::from([
+        first.clone(),
+        second.clone(),
+    ]))));
+    let sink = Arc::new(CollectSink::new());
+    let manager = PtyManager::new(backend, sink.clone());
+
+    manager
+        .spawn_pane(
+            "pane-screen-generation",
+            "session-1",
+            "project-1",
+            &cmd_spec(),
+            Some(AgentKind::Codex),
+            None,
+        )
+        .expect("spawn first generation");
+    let old_generation = manager.replay("pane-screen-generation", 0).generation;
+    manager.unregister("pane-screen-generation");
+    assert!(wait_for(1_000, || first.killed.load(Ordering::SeqCst)));
+
+    manager
+        .spawn_pane(
+            "pane-screen-generation",
+            "session-1",
+            "project-1",
+            &cmd_spec(),
+            Some(AgentKind::Codex),
+            None,
+        )
+        .expect("spawn replacement generation");
+    let new_generation = manager.replay("pane-screen-generation", 0).generation;
+    assert_ne!(old_generation, new_generation);
+    assert!(manager
+        .replay_generation("pane-screen-generation", 0, old_generation)
+        .is_err());
+    assert_eq!(
+        manager
+            .replay_generation("pane-screen-generation", 0, new_generation)
+            .unwrap()
+            .generation,
+        new_generation
+    );
+
+    manager
+        .observe_screen(
+            "pane-screen-generation",
+            "* Working (1s * esc to interrupt)".into(),
+            old_generation,
+            0,
+        )
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(!sink
+        .agent_events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|event| *event == CollectedAgentEvent::Status(AgentStatus::Working)));
+
+    manager
+        .observe_screen(
+            "pane-screen-generation",
+            "* Working (1s * esc to interrupt)".into(),
+            new_generation,
+            0,
+        )
+        .unwrap();
+    assert!(wait_for(1_000, || sink
+        .agent_events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(
+            |event| *event == CollectedAgentEvent::Status(AgentStatus::Working)
+        )));
+
+    manager.shutdown();
+    BlockingIoState::set(&first.release_reader);
+    BlockingIoState::set(&second.release_reader);
 }
 
 #[test]

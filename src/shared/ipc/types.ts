@@ -347,6 +347,7 @@ export interface AppConfig {
 
 export interface PaneChunk {
   paneId: string;
+  generation: number;
   seq: number;
   data: string;
 }
@@ -357,6 +358,7 @@ export interface OutputBatch {
 
 export interface ReplayDto {
   paneId: string;
+  generation: number;
   truncated: boolean;
   fromSeq?: number | null;
   chunks: PaneChunk[];

@@ -3,15 +3,52 @@
 // these specs guard layout, overlays and keyboard routing in the web layer.
 import { test, expect, Page } from "playwright/test";
 
-async function mockTauri(page: Page) {
-  await page.addInitScript(() => {
+async function mockTauri(page: Page, language = "zh-CN", populated = false) {
+  await page.addInitScript(({ initialLanguage, withContent }) => {
     const listeners = new Map<string, Array<(e: { payload: unknown }) => void>>();
+    const project = {
+      id: "project-smoke",
+      name: "Galaxy",
+      path: "C:\\workspace\\galaxy",
+      color: "#f5f6f7",
+      createdAt: "2026-08-05T00:00:00Z",
+      lastAccessedAt: "2026-08-05T00:00:00Z",
+    };
+    const profile = {
+      id: "pwsh",
+      name: "PowerShell 7",
+      program: "pwsh.exe",
+      args: [],
+      icon: ">_",
+      env: {},
+      source: "detected",
+    };
+    const session = {
+      id: "session-smoke",
+      projectId: project.id,
+      title: "Codex implementation review",
+      sortOrder: 0,
+      layout: {
+        pane: {
+          id: "pane-smoke",
+          cwd: project.path,
+          profile,
+          cols: 100,
+          rows: 30,
+          title: "Codex implementation review",
+          active: true,
+          agentKind: "codex",
+        },
+      },
+      syncInput: false,
+      createdAt: "2026-08-05T00:00:00Z",
+    };
     const store = {
-      projects: [],
-      sessions: [],
+      projects: withContent ? [project] : [],
+      sessions: withContent ? [session] : [],
       config: {
         schemaVersion: 3,
-        language: "zh-CN",
+        language: initialLanguage,
         terminalFontSize: 14,
         uiFontSize: 13,
         theme: "dark",
@@ -39,7 +76,19 @@ async function mockTauri(page: Page) {
         hardwareAcceleration: true,
         defaultProfileId: null,
       },
-      notifications: [],
+      notifications: withContent
+        ? [
+            {
+              id: "notification-smoke",
+              at: "2026-08-05T00:00:00Z",
+              title: "Codex completed",
+              body: "Review the generated changes",
+              read: false,
+              projectId: project.id,
+              paneId: "pane-smoke",
+            },
+          ]
+        : [],
     };
     const persistedConfig = localStorage.getItem("galaxy-e2e-config");
     if (persistedConfig) {
@@ -86,7 +135,7 @@ async function mockTauri(page: Page) {
       },
     };
     void listeners;
-  });
+  }, { initialLanguage: language, withContent: populated });
 }
 
 async function expectAppearanceFits(page: Page) {
@@ -94,10 +143,15 @@ async function expectAppearanceFits(page: Page) {
     const selectors = [
       ".titlebar .app-name",
       ".settings-nav button",
-      ".settings-footer button",
+      ".modal-footer button",
       ".form-row label",
       ".statusbar .status-item",
       ".tabbar button",
+      ".agent-badge",
+      ".pane-chrome",
+      ".panel-tabs button[role=tab]",
+      ".titlebar-tool-badge",
+      ".workspace-switcher button",
       ".context-sidebar button",
     ].join(",");
     const clipped = Array.from(document.querySelectorAll<HTMLElement>(selectors))
@@ -259,5 +313,52 @@ test.describe("app shell", () => {
     dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("spinbutton").nth(0)).toHaveValue("22");
     await expect(dialog.getByRole("spinbutton").nth(1)).toHaveValue("18");
+  });
+
+  test("keeps English right-panel tabs usable at the maximum UI size", async ({ page }) => {
+    await mockTauri(page, "en-US", true);
+    await page.goto("/");
+    await expect(page.locator(".pane-chrome")).toBeVisible();
+    await expect(page.locator(".agent-badge")).toBeVisible();
+    await expect(page.locator(".titlebar-tool-badge")).toBeVisible();
+    await page.getByRole("button", { name: "Agent", exact: true }).first().click();
+    await expect(page.locator(".right-panel")).toBeVisible();
+    await page.locator(".titlebar-settings").click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("spinbutton").nth(1).fill("24");
+    await expect(page.locator(":root")).toHaveCSS("font-size", "24px");
+    const panelTabFontSize = await page
+      .locator('.panel-tabs button[role="tab"]')
+      .first()
+      .evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+    expect(panelTabFontSize).toBeGreaterThan(20);
+    const panelTabHeights = await page.locator(".panel-tabs").evaluate((tabList) => ({
+      available: tabList.clientHeight,
+      required: Math.max(
+        ...Array.from(tabList.querySelectorAll<HTMLElement>('button[role="tab"]')).map(
+          (tab) => tab.offsetHeight,
+        ),
+      ),
+    }));
+    expect(panelTabHeights.available).toBeGreaterThanOrEqual(panelTabHeights.required);
+    await expectAppearanceFits(page);
+    await dialog.getByRole("button", { name: "Save" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.locator(":root")).toHaveCSS("font-size", "24px");
+    await page.screenshot({
+      path: "test-results/appearance-english-panel-desktop.png",
+      fullPage: true,
+    });
+
+    await page.setViewportSize({ width: 560, height: 720 });
+    await expectAppearanceFits(page);
+    const notificationsTab = page.getByRole("tab", { name: /Notifications/ });
+    await notificationsTab.click();
+    await expect(notificationsTab).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByText("Review the generated changes")).toBeVisible();
+    await page.screenshot({
+      path: "test-results/appearance-english-panel-narrow.png",
+      fullPage: true,
+    });
   });
 });
