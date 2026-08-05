@@ -28,7 +28,10 @@ export function ActivityHeatmap({ daily }: { daily: DailyActivity[] }) {
           <span>多</span>
         </div>
       </header>
-      <div className="activity-heatmap-scroll">
+      <div
+        className="activity-heatmap-scroll"
+        style={{ ["--heatmap-weeks" as string]: String(Math.max(1, Math.ceil(daily.length / 7))) }}
+      >
         <div className="heatmap-months" aria-hidden="true">
           {monthLabels.map((label) => (
             <span key={`${label.month}-${label.column}`} style={{ gridColumn: label.column }}>

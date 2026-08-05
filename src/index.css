@@ -1379,31 +1379,55 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
 }
 .insights-region-header h2 { margin: 0; font-size: var(--fs-heading-sm); font-weight: 600; }
 .insights-region-header > span { color: var(--text-lo); font-size: var(--fs-small); }
-.activity-heatmap-scroll { overflow-x: auto; padding: 2px 0 8px; }
+/* Heatmap fills the region width; columns grow equally. Short ranges still
+   stretch. If weeks exceed the viewport (rare, tiny windows), scroll horizontally. */
+.activity-heatmap-scroll {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 2px 0 8px;
+}
 .heatmap-months,
 .activity-heatmap {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: 0;
   display: grid;
-  grid-auto-columns: 11px;
+  grid-template-columns: repeat(var(--heatmap-weeks, 1), minmax(10px, 1fr));
   grid-auto-flow: column;
-  gap: 3px;
+  gap: clamp(2px, 0.35vw, 4px);
 }
 .heatmap-months {
   height: 18px;
   grid-template-rows: 18px;
   color: var(--text-lo);
   font-size: var(--fs-caption);
+  margin-bottom: 4px;
 }
-.heatmap-months span { white-space: nowrap; }
-.activity-heatmap { grid-template-rows: repeat(7, 11px); }
+.heatmap-months span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+}
+.activity-heatmap { grid-template-rows: repeat(7, auto); }
 .activity-cell {
-  width: 11px;
-  height: 11px;
   border: 0;
   border-radius: 1px;
   padding: 0;
   background: #171a1d;
+}
+.heatmap-legend .activity-cell {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  display: inline-block;
+}
+.activity-heatmap .activity-cell {
+  width: 100%;
+  min-width: 0;
+  height: auto;
+  aspect-ratio: 1;
+  align-self: stretch;
 }
 button.activity-cell { cursor: crosshair; }
 .activity-level-1 { background: #2a2e32; }
