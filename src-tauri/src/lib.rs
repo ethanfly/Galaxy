@@ -195,13 +195,7 @@ pub(crate) fn apply_global_hotkey(
         .on_shortcut(hotkey, move |_app, _shortcut, event| {
             if event.state() == ShortcutState::Pressed {
                 if let Some(window) = handle2.get_webview_window("main") {
-                    if window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false)
-                    {
-                        let _ = window.hide();
-                    } else {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
+                    toggle_main_window_for_global_hotkey(&window);
                 }
             }
         })
@@ -210,4 +204,40 @@ pub(crate) fn apply_global_hotkey(
             format!("全局热键无效或已被占用: {e}"),
         ))?;
     Ok(())
+}
+
+/// Hide only when the main window is already in the foreground.
+/// Minimized / unfocused / hidden windows must be brought forward — matching
+/// the single-instance focus path (`unminimize` + `show` + `set_focus`).
+pub(crate) fn global_hotkey_should_hide(visible: bool, focused: bool, minimized: bool) -> bool {
+    visible && focused && !minimized
+}
+
+fn toggle_main_window_for_global_hotkey(window: &tauri::WebviewWindow) {
+    let visible = window.is_visible().unwrap_or(false);
+    let focused = window.is_focused().unwrap_or(false);
+    let minimized = window.is_minimized().unwrap_or(false);
+    if global_hotkey_should_hide(visible, focused, minimized) {
+        let _ = window.hide();
+        return;
+    }
+    // Same restore order as the single-instance second-launch handler.
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+#[cfg(test)]
+mod global_hotkey_toggle_tests {
+    use super::global_hotkey_should_hide;
+
+    #[test]
+    fn hides_only_when_foreground_and_not_minimized() {
+        assert!(global_hotkey_should_hide(true, true, false));
+        assert!(!global_hotkey_should_hide(true, true, true));
+        assert!(!global_hotkey_should_hide(true, false, false));
+        assert!(!global_hotkey_should_hide(false, false, false));
+        assert!(!global_hotkey_should_hide(false, false, true));
+        assert!(!global_hotkey_should_hide(true, false, true));
+    }
 }
