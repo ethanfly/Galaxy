@@ -12,6 +12,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import {
   ptyBroadcast,
+  ptyObserveScreen,
   ptyResize,
   ptyWrite,
   systemOpenExternal,
@@ -25,6 +26,7 @@ import { t } from "../../shared/i18n";
 import { layoutPanes } from "../../shared/utils";
 import { GALAXY_THEME } from "./terminalTheme";
 import { applyTerminalFontSize, terminalOptions } from "./terminalAppearance";
+import { createAgentScreenObserver, readAgentScreen } from "./agentScreenObserver";
 
 export const searchAddons = new Map<string, SearchAddon>();
 export const terminals = new Map<string, Terminal>();
@@ -196,6 +198,25 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     };
     registerTerminal(handle);
 
+    const isAgentPane = () => {
+      if (pane.agentKind || useTerminalStore.getState().agentStatus[pane.id]) return true;
+      const current = useAppStore.getState().sessions.find((item) => item.id === session.id);
+      return !!current && !!layoutPanes(current.layout).find((item) => item.id === pane.id)?.agentKind;
+    };
+    const screenObserver = createAgentScreenObserver(
+      () => readAgentScreen(term),
+      (screen) => ptyObserveScreen(pane.id, screen),
+    );
+    const writeParsedSub = term.onWriteParsed(() => {
+      if (isAgentPane()) screenObserver.schedule();
+    });
+    let agentKnown = isAgentPane();
+    const unsubAgentRecognition = useTerminalStore.subscribe(() => {
+      const nextAgentKnown = isAgentPane();
+      if (nextAgentKnown && !agentKnown) screenObserver.schedule();
+      agentKnown = nextAgentKnown;
+    });
+
     // Input: direct, unbatched. Sync-input fans out to the whole session.
     // Guard against disposed terminals still receiving key events briefly.
     let inputAlive = true;
@@ -252,6 +273,9 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       inputSub.dispose();
       bellSub.dispose();
       renderSub.dispose();
+      writeParsedSub.dispose();
+      unsubAgentRecognition();
+      screenObserver.dispose();
       textarea?.removeEventListener("focus", handleTerminalFocus);
       textarea?.removeEventListener("compositionstart", syncImeAnchor, true);
       textarea?.removeEventListener("compositionupdate", scheduleImeConstraint);

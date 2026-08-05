@@ -90,7 +90,7 @@ After xterm parses writes for an Agent pane, `TerminalView` schedules a throttle
 
 The frontend sends the snapshot using a dedicated typed IPC wrapper and Tauri command. The command accepts only `paneId` and rendered text, validates the pane through `PtyManager`, and exposes no generic process or filesystem capability.
 
-Observations are limited to Agent panes, no more frequent than every 250ms while output changes, with one trailing observation after 600ms. Snapshot text is used in memory only and must never be persisted or logged.
+Observations are limited to Agent panes, no more frequent than every 250ms while output changes, with one trailing observation after 600ms. Active duplicate snapshots are suppressed, but the trailing observation may repeat an unchanged screen so the backend can confirm a stable Idle candidate. Snapshot text is used in memory only and must never be persisted or logged.
 
 ### 6.2 Classification
 

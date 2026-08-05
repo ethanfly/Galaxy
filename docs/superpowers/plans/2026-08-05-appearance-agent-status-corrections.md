@@ -379,7 +379,7 @@ Define `createAgentScreenObserver(read, send, options?)` returning `{ schedule, 
 - the first parsed write can observe immediately;
 - rapid schedules emit no more often than 250ms;
 - the last change emits one settled sample 600ms later;
-- duplicate snapshots are not resent;
+- duplicate active snapshots are not resent, while the one trailing sample may repeat an unchanged screen for stable-state confirmation;
 - `dispose()` cancels pending timers;
 - a rejected `send` promise is swallowed and does not stop later observations.
 
