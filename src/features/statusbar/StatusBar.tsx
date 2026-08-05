@@ -143,7 +143,7 @@ function GitComponent() {
             boxShadow: "0 8px 30px rgba(0,0,0,.5)",
           }}
         >
-          <div style={{ padding: "4px 8px", color: "var(--text-lo)", fontSize: 10 }}>{t("checkout")}</div>
+          <div style={{ padding: "4px 8px", color: "var(--text-lo)", fontSize: "var(--fs-caption)" }}>{t("checkout")}</div>
           {error && <div style={{ padding: "4px 8px", color: "var(--red-400)", maxWidth: 280, whiteSpace: "pre-wrap" }}>{error}</div>}
           {branches.map((b) => (
             <button

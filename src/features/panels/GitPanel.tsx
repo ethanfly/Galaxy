@@ -109,7 +109,7 @@ export function GitPanel() {
     return (
       <div className="panel-body">
         <Empty text={`${project.name} 不是 Git 仓库`} />
-        <div style={{ textAlign: "center", color: "var(--text-lo)", fontSize: 12 }}>
+        <div style={{ textAlign: "center", color: "var(--text-lo)", fontSize: "var(--fs-body-small)" }}>
           在终端中运行 <code className="kbd">git init</code> 以启用
         </div>
       </div>

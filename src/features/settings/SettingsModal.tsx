@@ -409,8 +409,8 @@ function WorkflowsSection({
           </div>
           {wf.params.map((p, pi) => (
             <div key={pi} className="form-row" style={{ paddingLeft: 24 }}>
-              <label style={{ fontSize: 12 }}>参数 {p.name}</label>
-              <div className="form-value" style={{ fontSize: 12 }}>
+              <label style={{ fontSize: "var(--fs-body-small)" }}>参数 {p.name}</label>
+              <div className="form-value" style={{ fontSize: "var(--fs-body-small)" }}>
                 <input
                   type="text"
                   style={{ width: 120 }}
@@ -743,7 +743,7 @@ function DiagnosticsSection() {
 
   return (
     <div>
-      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
+      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "var(--fs-body-small)" }}>
         <tbody>
           {[
             ["应用版本", info.appVersion],
@@ -768,7 +768,7 @@ function DiagnosticsSection() {
       </table>
       <h4 style={{ color: "var(--text-md)", margin: "14px 0 4px" }}>Shell 列表</h4>
       {info.shells.map((s) => (
-        <div key={s} style={{ fontSize: 12, color: "var(--text-md)", padding: "1px 0" }}>· {s}</div>
+        <div key={s} style={{ fontSize: "var(--fs-body-small)", color: "var(--text-md)", padding: "1px 0" }}>· {s}</div>
       ))}
       <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
         <button className="btn" onClick={() => void genReport()}>
@@ -800,7 +800,7 @@ function DiagnosticsSection() {
             overflow: "auto",
             background: "var(--space-0)",
             padding: 10,
-            fontSize: 11,
+            fontSize: "var(--fs-small)",
             color: "var(--text-md)",
             whiteSpace: "pre-wrap",
           }}

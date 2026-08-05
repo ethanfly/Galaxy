@@ -70,7 +70,7 @@ function ResultsList({ results, onClose }: { results: CommandBlock[]; onClose: (
         <div key={b.id} className="result-item" style={{ alignItems: "flex-start" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <code>{truncate(b.command || "(未捕获命令)", 96)}</code>
-            <div style={{ fontSize: 11, color: "var(--text-lo)", marginTop: 2 }}>
+            <div style={{ fontSize: "var(--fs-small)", color: "var(--text-lo)", marginTop: 2 }}>
               {b.favorite ? <IconStar className="inline-icon" filled size={12} /> : null}
               {formatDateTime(b.startedAt)}
               {b.exitCode != null ? ` · exit ${b.exitCode}` : ""}

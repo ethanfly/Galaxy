@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect } from "react";
 
 import { TitleBar } from "./features/titlebar/TitleBar";
 import { TabBar } from "./features/tabs/TabBar";
@@ -21,6 +21,7 @@ import { onAgentStatus, onOpenHere, onPtyExit, onPtyOutput, onRecoveryAvailable,
 import { useAppStore } from "./shared/stores/appStore";
 import { useTerminalStore } from "./shared/stores/terminalStore";
 import { useUiStore } from "./shared/stores/uiStore";
+import { DEFAULT_APPEARANCE } from "./shared/appearance";
 import { useShortcuts } from "./features/shortcuts/useShortcuts";
 import { t } from "./shared/i18n";
 import { IconAlert } from "./shared/icons/Icons";
@@ -32,8 +33,15 @@ export default function App() {
   const error = useAppStore((s) => s.error);
   const ingest = useTerminalStore((s) => s.ingest);
   const workspaceView = useUiStore((s) => s.workspaceView);
+  const persistedUiFontSize = useAppStore((s) => s.config?.uiFontSize);
+  const previewUiFontSize = useUiStore((s) => s.appearancePreview?.uiFontSize);
+  const uiFontSize = previewUiFontSize ?? persistedUiFontSize ?? DEFAULT_APPEARANCE.uiFontSize;
 
   useShortcuts();
+
+  useLayoutEffect(() => {
+    document.documentElement.style.setProperty("--ui-font-size", `${uiFontSize}px`);
+  }, [uiFontSize]);
 
   useEffect(() => {
     void init();

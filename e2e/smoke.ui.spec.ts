@@ -42,7 +42,7 @@ async function mockTauri(page: Page) {
       notifications: [],
     };
     const noop = () => Promise.resolve(undefined);
-    const responses: Record<string, () => unknown> = {
+    const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
       boot_info: () => ({ recoveredFromCrash: false, readOnly: false, dataDir: "D" }),
       project_list: () => store.projects,
       session_list: () => store.sessions,
@@ -51,13 +51,16 @@ async function mockTauri(page: Page) {
       notification_list: () => store.notifications,
       system_pending_open_here: () => [],
       workspace_restore: () => 0,
-      config_update: () => store.config,
+      config_update: (args) => {
+        store.config = args?.config as typeof store.config;
+        return store.config;
+      },
       window_save_state: noop,
     };
     (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
-      invoke: (cmd: string) => {
+      invoke: (cmd: string, args?: Record<string, unknown>) => {
         const fn = responses[cmd];
-        return Promise.resolve(fn ? fn() : undefined);
+        return Promise.resolve(fn ? fn(args) : undefined);
       },
       transformCallback: () => 0,
       metadata: {
@@ -136,5 +139,35 @@ test.describe("app shell", () => {
     await expect(dialog.locator(".settings-shell")).toHaveCSS("flex-direction", "column");
     await expect(dialog.locator(".settings-nav")).toHaveCSS("flex-direction", "row");
     await page.screenshot({ path: "test-results/settings-theme-narrow.png", fullPage: true });
+  });
+
+  test("previews UI font size across the interface and restores it on cancel", async ({ page }) => {
+    await mockTauri(page);
+    await page.goto("/");
+    await expect(page.locator(".empty-workspace")).toBeVisible();
+    await page.locator(".titlebar-settings").click();
+
+    const samples = [
+      page.locator(".titlebar .app-name"),
+      page.locator(".settings-nav button").first(),
+      page.locator(".form-row label").first(),
+      page.locator(".statusbar .status-item").first(),
+    ];
+    const fontSize = async (locator: (typeof samples)[number]) =>
+      Number.parseFloat(await locator.evaluate((element) => getComputedStyle(element).fontSize));
+    const before = await Promise.all(samples.map(fontSize));
+
+    await page.getByRole("spinbutton").nth(1).fill("18");
+    await expect(page.locator(":root")).toHaveCSS("font-size", "18px");
+    const preview = await Promise.all(samples.map(fontSize));
+    for (let index = 0; index < samples.length; index += 1) {
+      expect(preview[index] / before[index]).toBeCloseTo(18 / 13, 2);
+    }
+
+    await page.getByRole("button", { name: "取消" }).click();
+    await expect(page.locator(":root")).toHaveCSS("font-size", "13px");
+    await page.locator(".titlebar-settings").click();
+    const restored = await Promise.all(samples.map(fontSize));
+    expect(restored).toEqual(before);
   });
 });

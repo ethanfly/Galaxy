@@ -33,8 +33,37 @@ vi.mock("./features/terminal/MovePaneModal", () => ({ MovePaneModal: () => null 
 vi.mock("./features/insights/InsightsView", () => ({ InsightsView: () => null }));
 
 import App from "./App";
+import type { AppConfig } from "./shared/ipc/types";
 import { useAppStore } from "./shared/stores/appStore";
 import { useUiStore } from "./shared/stores/uiStore";
+
+const appearanceConfig: AppConfig = {
+  schemaVersion: 3,
+  language: "zh-CN",
+  terminalFontSize: 16,
+  uiFontSize: 17,
+  theme: "dark",
+  defaultProfileId: null,
+  customProfiles: [],
+  globalHotkey: null,
+  contextMenuEnabled: true,
+  agentNotifications: true,
+  triggerNotifications: true,
+  shortcuts: [],
+  statusbarComponents: [],
+  windowState: { width: 1200, height: 800, maximized: false },
+  layoutTemplates: [],
+  workflows: [],
+  triggers: [],
+  featureFlags: {
+    commandBlocks: true,
+    agentPanel: true,
+    gitPanel: true,
+    workflows: true,
+    triggers: true,
+  },
+  hardwareAcceleration: true,
+};
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -67,7 +96,12 @@ describe("App global event listener lifecycle", () => {
       sessions: [],
       unreadCount: 0,
     });
-    useUiStore.setState({ workspaceView: "terminal", contextSidebarOpen: true });
+    useUiStore.setState({
+      workspaceView: "terminal",
+      contextSidebarOpen: true,
+      appearancePreview: null,
+    });
+    document.documentElement.style.removeProperty("--ui-font-size");
   });
 
   afterEach(() => {
@@ -121,5 +155,27 @@ describe("App global event listener lifecycle", () => {
     expect(document.querySelector("[data-testid=workspace-instance]")).toBe(workspace);
     expect(terminalSurface?.getAttribute("aria-hidden")).toBe("true");
     expect(document.querySelector("[data-testid=insights-surface]")).not.toBeNull();
+  });
+
+  it("applies preview, persisted, and boot-default UI font sizes to the root", async () => {
+    useAppStore.setState({ config: appearanceConfig });
+    const view = render(<App />);
+
+    await waitFor(() => {
+      expect(document.documentElement.style.getPropertyValue("--ui-font-size")).toBe("17px");
+    });
+
+    act(() => {
+      useUiStore.getState().setAppearancePreview({ terminalFontSize: 20, uiFontSize: 19 });
+    });
+    expect(document.documentElement.style.getPropertyValue("--ui-font-size")).toBe("19px");
+
+    act(() => useUiStore.getState().setAppearancePreview(null));
+    expect(document.documentElement.style.getPropertyValue("--ui-font-size")).toBe("17px");
+
+    view.unmount();
+    useAppStore.setState({ config: null });
+    render(<App />);
+    expect(document.documentElement.style.getPropertyValue("--ui-font-size")).toBe("13px");
   });
 });

@@ -67,7 +67,7 @@ export function AgentPanel() {
   return (
     <div className="panel-body">
       <div className="panel-toolbar">
-        <span style={{ flex: 1, color: "var(--text-lo)", fontSize: 12 }}>
+        <span style={{ flex: 1, color: "var(--text-lo)", fontSize: "var(--fs-body-small)" }}>
           {project.name} 的 Agent 会话
           {result && !scanning && (
             <span style={{ marginLeft: 6 }}>· {conversations.length} 条</span>
@@ -122,7 +122,7 @@ function ConversationItem({
         {c.lastMessageAt && <span>{formatDateTime(c.lastMessageAt)}</span>}
         <span className={`agent-status-pill ${c.status}`}>{c.status}</span>
       </div>
-      {err && <div style={{ color: "var(--red-400)", fontSize: 11 }}>{err}</div>}
+      {err && <div style={{ color: "var(--red-400)", fontSize: "var(--fs-small)" }}>{err}</div>}
       <div className="conv-actions">
         <button type="button" className="btn" onClick={onView}>
           {t("viewMessages")}
@@ -181,7 +181,7 @@ function MessagesModal({
           <div key={i} style={{ marginBottom: 10 }}>
             <div
               style={{
-                fontSize: 11,
+                fontSize: "var(--fs-small)",
                 color: m.role === "user" ? "var(--text-hi)" : "var(--accent-soft)",
                 marginBottom: 2,
               }}

@@ -18,7 +18,7 @@ export function NotificationsPanel() {
   return (
     <div className="panel-body">
       <div className="panel-toolbar">
-        <span style={{ flex: 1, color: "var(--text-lo)", fontSize: 12 }}>
+        <span style={{ flex: 1, color: "var(--text-lo)", fontSize: "var(--fs-body-small)" }}>
           {notifications.filter((n) => !n.read).length} 条未读
         </span>
         <button
