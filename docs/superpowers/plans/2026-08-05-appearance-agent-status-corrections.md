@@ -167,7 +167,7 @@ git commit -m "fix: add reversible appearance preview"
 - Modify: `src/features/search/BlockSearchModal.tsx`
 - Modify: `src/features/settings/SettingsModal.tsx`
 - Modify: `src/features/statusbar/StatusBar.tsx`
-- Create: `src/appearance-css.test.ts`
+- Modify: `e2e/smoke.ui.spec.ts`
 
 - [ ] **Step 1: Add a failing root-variable test**
 
@@ -186,31 +186,22 @@ expect(document.documentElement.style.getPropertyValue("--ui-font-size")).toBe("
 
 Clear preview and assert the variable returns to `17px`.
 
-- [ ] **Step 2: Add a failing CSS audit test**
+- [ ] **Step 2: Add a failing computed-style UI test**
 
-Create `src/appearance-css.test.ts` to read source files using Node's `readFileSync` and reject fixed text sizes:
+Extend `e2e/smoke.ui.spec.ts` so the config mock records `config_update`, open Settings, and capture the computed font size of representative root, navigation, modal, and status-bar text. Change UI size from 13 to 18 before Save and assert every sample grows by the expected `18 / 13` ratio within browser rounding tolerance. Click Cancel and assert every sample returns to its literal baseline.
 
-```ts
-const css = readFileSync(new URL("./index.css", import.meta.url), "utf8");
-expect(css.match(/font-size:\s*(?:9|10|11|12|13|14|15|21|24|42)px/g) ?? []).toEqual([]);
-
-for (const relativePath of INLINE_STYLE_FILES) {
-  const source = readFileSync(new URL(relativePath, import.meta.url), "utf8");
-  expect(source.match(/fontSize:\s*(?:9|10|11|12|13|14|15|21|24|42)\b/g) ?? []).toEqual([]);
-}
-```
-
-List every TSX file currently reported by `rg -n "fontSize:\\s*[0-9]+" src` so the audit cannot silently ignore an inline fixed text size.
+This is the regression gate for relative tokens: replacing a token with a fixed pixel value must fail through observable browser behavior, not a source-text assertion.
 
 - [ ] **Step 3: Run tests and confirm red**
 
 Run:
 
 ```powershell
-npx vitest run src/App.test.tsx src/appearance-css.test.ts
+npx vitest run src/App.test.tsx
+npx playwright test --project=ui e2e/smoke.ui.spec.ts
 ```
 
-Expected: root variable is not set, and the audit reports the current fixed declarations.
+Expected: root variable is not set and representative fixed-size descendants do not scale.
 
 - [ ] **Step 4: Apply effective UI size at the application root**
 
@@ -254,16 +245,17 @@ Run:
 
 ```powershell
 rg -n "font-size:\s*[0-9]+px|fontSize:\s*[0-9]+" src
-npx vitest run src/App.test.tsx src/appearance-css.test.ts
+npx vitest run src/App.test.tsx
+npx playwright test --project=ui e2e/smoke.ui.spec.ts
 npx tsc --noEmit
 ```
 
-Expected: `rg` has no user-facing fixed font sizes; tests pass. Any legitimate non-text glyph discovered during the scan must be documented in the test allowlist by exact selector/path, not hidden with a broad regex exemption.
+Expected: `rg` has no user-facing fixed font sizes and the behavioral tests pass. Inspect any remaining match by exact selector/path and confirm it is non-text geometry rather than hiding it with a broad exemption.
 
 - [ ] **Step 7: Commit the UI scale**
 
 ```powershell
-git add src/App.tsx src/App.test.tsx src/index.css src/appearance-css.test.ts src/features/panels/AgentPanel.tsx src/features/panels/GitPanel.tsx src/features/panels/NotificationsPanel.tsx src/features/search/BlockSearchModal.tsx src/features/settings/SettingsModal.tsx src/features/statusbar/StatusBar.tsx
+git add src/App.tsx src/App.test.tsx src/index.css src/features/panels/AgentPanel.tsx src/features/panels/GitPanel.tsx src/features/panels/NotificationsPanel.tsx src/features/search/BlockSearchModal.tsx src/features/settings/SettingsModal.tsx src/features/statusbar/StatusBar.tsx e2e/smoke.ui.spec.ts
 git commit -m "fix: apply interface font scale"
 ```
 
@@ -707,11 +699,11 @@ git commit -m "fix: prevent false agent completion notifications"
 - Modify: `e2e/ime.ui.spec.ts`
 - Create: `e2e/agent-status.ui.spec.ts` only if the existing terminal mock would become less clear by adding Agent fixtures
 
-- [ ] **Step 1: Add a failing appearance preview E2E test**
+- [ ] **Step 1: Extend appearance E2E coverage to persistence and maximum size**
 
-Make the mock `config_update` store the supplied config rather than always returning the original object. Open Settings and capture baseline computed sizes for a UI label and `.xterm-helper-textarea`/`.xterm-rows` text. Change UI 13 -> 18 and terminal 14 -> 24 before Save. Assert both computed sizes increase and at least one `pty_resize` call is recorded. Click Cancel and assert both return to baseline.
+Reuse the Task 2 config mock behavior. Capture baseline computed terminal text size, change terminal 14 -> 24 before Save, assert it increases and at least one `pty_resize` call is recorded, then Cancel and assert it returns to baseline.
 
-Also reload with mocked persisted values and assert the non-default values apply on startup.
+Save non-default UI and terminal values, reload with those persisted values, and assert both apply on startup. At the maximum UI value 24, assert fixed chrome has no clipped labels/buttons, incoherent overlaps, or horizontal document overflow at desktop and narrow viewports.
 
 - [ ] **Step 2: Add a failing Agent observation UI test**
 
