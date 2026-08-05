@@ -67,6 +67,7 @@
 * { box-sizing: border-box; letter-spacing: 0; }
 
 html {
+  height: 100%;
   font-size: var(--ui-font-size);
 }
 

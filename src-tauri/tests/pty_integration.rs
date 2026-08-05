@@ -1725,6 +1725,11 @@ fn powershell_and_profile_env_work() {
             None,
         )
         .expect("spawn powershell");
+    assert!(
+        wait_for(8_000, || sink.all_text().contains("PS ")),
+        "PowerShell prompt did not become ready, got {}",
+        sink.all_text().chars().take(400).collect::<String>()
+    );
     manager
         .write_input("pane-ps", "echo \"PS-$env:GALAXY_TEST-MARK\"\r")
         .unwrap();

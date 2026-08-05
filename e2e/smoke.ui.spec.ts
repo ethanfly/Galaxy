@@ -190,6 +190,27 @@ test.describe("app shell", () => {
     await expect(page.locator(".starfield")).toHaveCount(0);
   });
 
+  test("keeps the app shell flush with the viewport after window height changes", async ({ page }) => {
+    await mockTauri(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/");
+    await expect(page.locator(".app-shell")).toBeVisible();
+
+    for (const height of [1100, 640, 900]) {
+      await page.setViewportSize({ width: 1440, height });
+      await expect.poll(() => page.evaluate(() => {
+        const shell = document.querySelector<HTMLElement>(".app-shell");
+        const rect = shell?.getBoundingClientRect();
+        return {
+          body: document.body.getBoundingClientRect().height,
+          document: document.documentElement.getBoundingClientRect().height,
+          shell: rect?.height ?? 0,
+          viewport: window.innerHeight,
+        };
+      })).toEqual({ body: height, document: height, shell: height, viewport: height });
+    }
+  });
+
   test("Ctrl+P opens command palette and Esc closes it", async ({ page }) => {
     await mockTauri(page);
     await page.goto("/");
