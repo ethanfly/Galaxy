@@ -594,6 +594,11 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
   height: 100%;
   font-variant-ligatures: none;
 }
+/* TUI mouse mode: default arrow so clickable widgets feel interactive. */
+.terminal-host .xterm.enable-mouse-events,
+.terminal-host .xterm.enable-mouse-events .xterm-viewport {
+  cursor: default;
+}
 /* Keep wide (CJK) glyphs from being clipped by aggressive letter-spacing */
 .terminal-host .xterm-rows span {
   text-rendering: optimizeLegibility;

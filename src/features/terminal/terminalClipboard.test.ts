@@ -8,6 +8,7 @@ import {
 
 function mockTerminal(overrides: {
   selection?: string;
+  mouseTrackingMode?: "none" | "x10" | "vt200" | "drag" | "any";
   onSelectionChange?: (listener: () => void) => { dispose: () => void };
 }) {
   const selection = overrides.selection ?? "";
@@ -17,6 +18,7 @@ function mockTerminal(overrides: {
   const term = {
     hasSelection: () => selection.length > 0,
     getSelection: () => selection,
+    modes: { mouseTrackingMode: overrides.mouseTrackingMode ?? "none" },
     onSelectionChange: (listener: () => void) => {
       selectionListener = listener;
       return (
@@ -170,5 +172,17 @@ describe("installTerminalClipboard", () => {
     const pass = term._key({ key: "C", ctrlKey: true, shiftKey: true });
     expect(pass).toBe(false);
     expect(writeText).toHaveBeenCalledWith("shift copy");
+  });
+
+  it("does not copy-on-select while a TUI has mouse tracking enabled", () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.spyOn(navigator.clipboard, "writeText").mockImplementation(writeText);
+
+    const term = mockTerminal({ selection: "ignored", mouseTrackingMode: "vt200" });
+    installTerminalClipboard(term as never);
+
+    term._fireSelection();
+    vi.advanceTimersByTime(200);
+    expect(writeText).not.toHaveBeenCalled();
   });
 });

@@ -55,6 +55,9 @@ export function installTerminalClipboard(term: Terminal): () => void {
       window.clearTimeout(copyTimer);
       copyTimer = null;
     }
+    // While a TUI owns mouse tracking, leave selection alone so click reports
+    // are not competed by copy-on-select.
+    if (term.modes.mouseTrackingMode !== "none") return;
     if (!term.hasSelection()) return;
     // Debounce so drag selection writes once when the gesture settles.
     copyTimer = window.setTimeout(flushCopy, 120);

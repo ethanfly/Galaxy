@@ -85,10 +85,29 @@ export const workspaceRestore = () => call<number>("workspace_restore");
 export const recoveryCleanStart = () => call<void>("recovery_clean_start");
 
 // ------------------------------------------------------------------ pty
+// Serialize PTY input per pane/session. Mouse DOWN/UP (and multi-byte
+// key sequences) are separate onData events; concurrent fire-and-forget
+// invokes can reorder through the async backend and break TUI clicks.
+const ptyWriteQueues = new Map<string, Promise<void>>();
+
+function enqueuePtyWrite(key: string, task: () => Promise<void>): Promise<void> {
+  const previous = ptyWriteQueues.get(key) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(task);
+  ptyWriteQueues.set(
+    key,
+    next.finally(() => {
+      if (ptyWriteQueues.get(key) === next) ptyWriteQueues.delete(key);
+    }),
+  );
+  return next;
+}
+
 export const ptyWrite = (paneId: string, data: string) =>
-  call<void>("pty_write", { paneId, data });
+  enqueuePtyWrite(`pane:${paneId}`, () => call<void>("pty_write", { paneId, data }));
 export const ptyBroadcast = (sessionId: string, data: string) =>
-  call<void>("pty_broadcast", { sessionId, data });
+  enqueuePtyWrite(`session:${sessionId}`, () =>
+    call<void>("pty_broadcast", { sessionId, data }),
+  );
 export const ptyResize = (paneId: string, cols: number, rows: number) =>
   call<void>("pty_resize", { paneId, cols, rows });
 export const ptyReplay = (paneId: string, afterSeq: number, expectedGeneration: number) =>

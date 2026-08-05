@@ -7,22 +7,20 @@ use crate::error::{CmdError, CmdResult, IntoCmd};
 use crate::pty::manager::ReplayDto;
 use crate::state::AppState;
 
+/// Direct PTY input. Kept synchronous so keystrokes and mouse reports (DOWN
+/// then UP) are not reordered by the async runtime's blocking pool.
 #[tauri::command]
-pub async fn pty_write(
+pub fn pty_write(
     state: State<'_, Arc<AppState>>,
     pane_id: String,
     data: String,
 ) -> CmdResult<()> {
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || state.pty().write_input(&pane_id, &data))
-        .await
-        .map_err(|e| CmdError::new("INTERNAL", format!("写入任务失败: {e}")))?
-        .cmd()
+    state.pty().write_input(&pane_id, &data).cmd()
 }
 
 /// Synchronized input broadcast: write to every pane of the session (§5.2).
 #[tauri::command]
-pub async fn pty_broadcast(
+pub fn pty_broadcast(
     state: State<'_, Arc<AppState>>,
     session_id: String,
     data: String,
@@ -34,14 +32,9 @@ pub async fn pty_broadcast(
         };
         s.layout.panes().into_iter().map(|p| p.id.clone()).collect()
     };
-    let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        for id in pane_ids {
-            let _ = state.pty().write_input(&id, &data);
-        }
-    })
-    .await
-    .map_err(|e| CmdError::new("INTERNAL", format!("写入任务失败: {e}")))?;
+    for id in pane_ids {
+        let _ = state.pty().write_input(&id, &data);
+    }
     Ok(())
 }
 
