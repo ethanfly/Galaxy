@@ -80,6 +80,15 @@ pub async fn pty_replay(
 }
 
 #[tauri::command]
+pub async fn pty_observe_screen(
+    state: State<'_, Arc<AppState>>,
+    pane_id: String,
+    screen: String,
+) -> CmdResult<()> {
+    state.pty().observe_screen(&pane_id, screen).cmd()
+}
+
+#[tauri::command]
 pub async fn pty_kill(state: State<'_, Arc<AppState>>, pane_id: String) -> CmdResult<()> {
     state.pty().kill(&pane_id).cmd()
 }

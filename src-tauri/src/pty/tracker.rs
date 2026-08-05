@@ -552,12 +552,6 @@ pub fn infer_historical_agent_status(kind: AgentKind, stripped_tail: &str) -> Ag
     AgentStatus::Idle
 }
 
-/// Temporary compatibility for the live manager while rendered observations are wired in.
-#[doc(hidden)]
-pub fn infer_agent_status(kind: AgentKind, stripped_tail: &str) -> AgentStatus {
-    infer_historical_agent_status(kind, stripped_tail)
-}
-
 /// Build a CommandBlock from tracker output parts.
 pub fn make_block(
     project_id: &str,
@@ -674,10 +668,7 @@ mod tests {
             AgentStatus::Blocked
         );
         assert_eq!(
-            infer_historical_agent_status(
-                AgentKind::ClaudeCode,
-                "⠋ Thinking… (esc to interrupt)",
-            ),
+            infer_historical_agent_status(AgentKind::ClaudeCode, "⠋ Thinking… (esc to interrupt)"),
             AgentStatus::Working
         );
         assert_eq!(

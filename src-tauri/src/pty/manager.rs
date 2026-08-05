@@ -11,12 +11,13 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use serde::Serialize;
 
+use super::agent_status::{
+    infer_screen_observation, infer_stream_observation, AgentStateMachine, AgentTransition,
+};
 use super::backend::{PtyBackend, PtyProcess, PtySpec};
 use super::decode::StreamDecoder;
 use super::ring::{Replay, RingBuffer, RingChunk};
-use super::tracker::{
-    infer_agent_status, make_block, push_tail, strip_ansi, InputLineTracker, PaneTracker,
-};
+use super::tracker::{make_block, push_tail, strip_ansi, InputLineTracker, PaneTracker};
 use crate::core::models::{AgentKind, AgentStatus};
 use crate::core::trigger::{Trigger, TriggerAction};
 use crate::error::AppError;
@@ -25,6 +26,7 @@ const RING_BYTE_CAP: usize = 1024 * 1024;
 const RING_CHUNK_CAP: usize = 2048;
 const BATCH_WINDOW: Duration = Duration::from_millis(8);
 const STATUS_THROTTLE: Duration = Duration::from_millis(250);
+pub const MAX_SCREEN_OBSERVATION_BYTES: usize = 4096;
 const MAX_DRAIN_PER_WINDOW: usize = 256;
 /// Without OSC 133, finalize a quiet command block after this idle window so
 /// history records the last command without waiting for the next Enter.
@@ -73,6 +75,7 @@ pub trait PtyEventSink: Send + Sync {
     fn exit(&self, pane_id: &str, code: Option<i32>);
     fn title(&self, pane_id: &str, session_id: &str, title: &str);
     fn block_completed(&self, block: &crate::core::models::CommandBlock);
+    fn agent_detected(&self, _pane_id: &str, _session_id: &str, _kind: AgentKind) {}
     fn agent_status(&self, pane_id: &str, session_id: &str, kind: AgentKind, status: AgentStatus);
     fn trigger_fired(&self, fire: &TriggerFire);
     fn pty_error(&self, pane_id: &str, message: &str);
@@ -89,8 +92,8 @@ struct PaneCtx {
     trigger_line: String,
     /// Typed command buffer; ignores focus/CSI sequences from xterm onData.
     input: InputLineTracker,
-    last_status: AgentStatus,
-    last_status_at: Instant,
+    agent_state: AgentStateMachine,
+    last_stream_observed_at: Option<Instant>,
     trigger_cooldowns: HashMap<String, Instant>,
     exit_code: Option<i32>,
 }
@@ -122,6 +125,17 @@ enum PtyMsg {
         generation: u64,
         data: String,
     },
+    AgentDetected {
+        pane_id: String,
+        generation: u64,
+        kind: AgentKind,
+    },
+    ScreenObserved {
+        pane_id: String,
+        generation: u64,
+        screen: String,
+        observed_at: Instant,
+    },
 }
 
 enum PaneSideEffect {
@@ -136,6 +150,11 @@ enum PaneSideEffect {
         session_id: String,
         kind: AgentKind,
         status: AgentStatus,
+    },
+    AgentDetected {
+        pane_id: String,
+        session_id: String,
+        kind: AgentKind,
     },
     Trigger(TriggerFire),
 }
@@ -219,6 +238,7 @@ impl PtyManager {
         let mut reader = process.take_reader()?;
         let process: Arc<dyn PtyProcess> = process.into();
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
+        let initial_agent_kind = agent_kind;
 
         self.panes.lock().insert(
             pane_id.to_string(),
@@ -232,8 +252,8 @@ impl PtyManager {
                 tail: String::new(),
                 trigger_line: String::new(),
                 input: InputLineTracker::default(),
-                last_status: AgentStatus::Idle,
-                last_status_at: Instant::now(),
+                agent_state: AgentStateMachine::default(),
+                last_stream_observed_at: None,
                 trigger_cooldowns: HashMap::new(),
                 exit_code: None,
             },
@@ -250,6 +270,16 @@ impl PtyManager {
         );
         if let Some(replaced) = replaced {
             Self::request_process_kill(replaced.process);
+        }
+
+        // Publish known Agent metadata through the same serialized side-effect
+        // path as command-line detection before reader output can arrive.
+        if let Some(kind) = initial_agent_kind {
+            let _ = self.tx.send(PtyMsg::AgentDetected {
+                pane_id: pane_id.to_string(),
+                generation,
+                kind,
+            });
         }
 
         let tx = self.tx.clone();
@@ -408,6 +438,7 @@ impl PtyManager {
         // 2) Update command-line tracking; collect side effects without holding
         //    panes across sink callbacks (those may lock store / persist).
         let mut sides: Vec<PaneSideEffect> = Vec::new();
+        let mut detected: Option<(u64, AgentKind)> = None;
         {
             let mut panes = self.panes.lock();
             let Some(ctx) = panes.get_mut(pane_id) else {
@@ -420,12 +451,7 @@ impl PtyManager {
                 if let Some(kind) = super::tracker::detect_agent_kind(&line) {
                     if ctx.agent_kind != Some(kind) {
                         ctx.agent_kind = Some(kind);
-                        sides.push(PaneSideEffect::Agent {
-                            pane_id: pane_id.to_string(),
-                            kind,
-                            session_id: ctx.session_id.clone(),
-                            status: ctx.last_status,
-                        });
+                        detected = Some((ctx.generation, kind));
                     }
                 }
                 if ctx.tracker.shell_integration {
@@ -452,8 +478,42 @@ impl PtyManager {
                 ctx.tracker.touch();
             }
         }
+        if let Some((generation, kind)) = detected {
+            let _ = self.tx.send(PtyMsg::AgentDetected {
+                pane_id: pane_id.to_string(),
+                generation,
+                kind,
+            });
+        }
         Self::dispatch_side_effects(&self.sink, sides);
         Ok(())
+    }
+
+    /// Submit a small snapshot of the terminal's parsed, rendered screen.
+    /// Observation is best-effort and never blocks PTY input/output.
+    pub fn observe_screen(&self, pane_id: &str, screen: String) -> Result<(), AppError> {
+        if screen.len() > MAX_SCREEN_OBSERVATION_BYTES {
+            return Err(AppError::InvalidInput(
+                "Agent screen observation exceeds 4096 bytes".into(),
+            ));
+        }
+        let (generation, is_agent) = self
+            .panes
+            .lock()
+            .get(pane_id)
+            .map(|ctx| (ctx.generation, ctx.agent_kind.is_some()))
+            .ok_or_else(|| AppError::NotFound(format!("pane {pane_id}")))?;
+        if !is_agent {
+            return Ok(());
+        }
+        self.tx
+            .send(PtyMsg::ScreenObserved {
+                pane_id: pane_id.to_string(),
+                generation,
+                screen,
+                observed_at: Instant::now(),
+            })
+            .map_err(|_| AppError::Pty("PTY aggregator is unavailable".into()))
     }
 
     pub fn resize(&self, pane_id: &str, cols: u16, rows: u16) -> Result<(), AppError> {
@@ -527,22 +587,6 @@ impl PtyManager {
 
     pub fn is_alive(&self, pane_id: &str) -> bool {
         self.processes.lock().contains_key(pane_id)
-    }
-
-    pub fn mark_exit(&self, pane_id: &str, code: Option<i32>) {
-        let mut panes = self.panes.lock();
-        if let Some(ctx) = panes.get_mut(pane_id) {
-            ctx.exit_code = code;
-            if let Some(kind) = ctx.agent_kind {
-                let sid = ctx.session_id.clone();
-                ctx.last_status = AgentStatus::Done;
-                drop(panes);
-                Self::contain_aggregator_panic("agent exit callback", || {
-                    self.sink
-                        .agent_status(pane_id, &sid, kind, AgentStatus::Done);
-                });
-            }
-        }
     }
 
     fn aggregate_loop(
@@ -664,6 +708,8 @@ impl PtyManager {
         let mut grouped: HashMap<(String, u64), String> = HashMap::new();
         let mut lifecycle = Vec::new();
         let mut injects: Vec<(String, u64, String)> = Vec::new();
+        let mut detections: Vec<(String, u64, AgentKind)> = Vec::new();
+        let mut screens: Vec<(String, u64, String, Instant)> = Vec::new();
         for m in msgs {
             match m {
                 PtyMsg::Output {
@@ -703,14 +749,37 @@ impl PtyManager {
                 } => {
                     injects.push((pane_id.clone(), *generation, data.clone()));
                 }
+                PtyMsg::AgentDetected {
+                    pane_id,
+                    generation,
+                    kind,
+                } => detections.push((pane_id.clone(), *generation, *kind)),
+                PtyMsg::ScreenObserved {
+                    pane_id,
+                    generation,
+                    screen,
+                    observed_at,
+                } => screens.push((pane_id.clone(), *generation, screen.clone(), *observed_at)),
             }
         }
 
         // Output parsing and callbacks may be extension code. Contain failures
         // to this phase so injections and EOF cleanup below are never dropped.
+        let mut sides = Vec::new();
+        Self::process_agent_detections(&detections, panes, &mut sides);
+        let mut batch = OutputBatch { chunks: Vec::new() };
         Self::contain_aggregator_panic("output batch", || {
-            Self::process_output_batch(&order, &grouped, sink, panes, triggers);
+            Self::process_output_batch(&order, &grouped, panes, triggers, &mut batch, &mut sides);
         });
+        Self::contain_aggregator_panic("screen observation", || {
+            Self::process_screen_observations(&screens, panes, &mut sides);
+        });
+        Self::dispatch_side_effects(sink, sides);
+        if !batch.chunks.is_empty() {
+            Self::contain_aggregator_panic("output callback", || {
+                sink.output(&batch);
+            });
+        }
 
         // Injections (resume commands) bypass user-input tracking.
         for (pane_id, generation, data) in injects {
@@ -791,15 +860,76 @@ impl PtyManager {
         }
     }
 
+    fn process_agent_detections(
+        detections: &[(String, u64, AgentKind)],
+        panes: &Arc<Mutex<HashMap<String, PaneCtx>>>,
+        sides: &mut Vec<PaneSideEffect>,
+    ) {
+        let mut panes_guard = panes.lock();
+        for (pane_id, generation, kind) in detections {
+            let Some(ctx) = panes_guard.get_mut(pane_id) else {
+                continue;
+            };
+            if ctx.generation != *generation {
+                continue;
+            }
+            if ctx.agent_kind != Some(*kind) {
+                ctx.agent_kind = Some(*kind);
+            }
+            sides.push(PaneSideEffect::AgentDetected {
+                pane_id: pane_id.clone(),
+                session_id: ctx.session_id.clone(),
+                kind: *kind,
+            });
+        }
+    }
+
+    fn process_screen_observations(
+        screens: &[(String, u64, String, Instant)],
+        panes: &Arc<Mutex<HashMap<String, PaneCtx>>>,
+        sides: &mut Vec<PaneSideEffect>,
+    ) {
+        let mut panes_guard = panes.lock();
+        for (pane_id, generation, screen, observed_at) in screens {
+            let Some(ctx) = panes_guard.get_mut(pane_id) else {
+                continue;
+            };
+            if ctx.generation != *generation {
+                continue;
+            }
+            let Some(kind) = ctx.agent_kind else {
+                continue;
+            };
+            let observation = infer_screen_observation(kind, screen);
+            if let Some(transition) = ctx.agent_state.observe(observation, *observed_at) {
+                sides.push(Self::agent_side_effect(pane_id, ctx, transition));
+            }
+        }
+    }
+
+    fn agent_side_effect(
+        pane_id: &str,
+        ctx: &PaneCtx,
+        transition: AgentTransition,
+    ) -> PaneSideEffect {
+        PaneSideEffect::Agent {
+            pane_id: pane_id.to_string(),
+            session_id: ctx.session_id.clone(),
+            kind: ctx
+                .agent_kind
+                .expect("agent transition requires an Agent kind"),
+            status: transition.current,
+        }
+    }
+
     fn process_output_batch(
         order: &[(String, u64)],
         grouped: &HashMap<(String, u64), String>,
-        sink: &Arc<dyn PtyEventSink>,
         panes: &Arc<Mutex<HashMap<String, PaneCtx>>>,
         triggers: &Arc<Mutex<Vec<(Trigger, regex::Regex)>>>,
+        batch: &mut OutputBatch,
+        sides: &mut Vec<PaneSideEffect>,
     ) {
-        let mut batch = OutputBatch { chunks: Vec::new() };
-        let mut sides = Vec::new();
         {
             let mut panes_guard = panes.lock();
             let trigger_list = triggers.lock().clone();
@@ -847,31 +977,25 @@ impl PtyManager {
                 push_tail(&mut ctx.tail, &plain);
                 if !trigger_list.is_empty() {
                     ctx.trigger_line.push_str(&plain);
-                    Self::eval_triggers(pane_id, ctx, &trigger_list, &mut sides);
+                    Self::eval_triggers(pane_id, ctx, &trigger_list, sides);
                 }
                 if let Some(kind) = ctx.agent_kind {
-                    if ctx.last_status_at.elapsed() >= STATUS_THROTTLE {
-                        ctx.last_status_at = Instant::now();
-                        let status = infer_agent_status(kind, &ctx.tail);
-                        if status != ctx.last_status {
-                            ctx.last_status = status;
-                            sides.push(PaneSideEffect::Agent {
-                                pane_id: pane_id.clone(),
-                                session_id: ctx.session_id.clone(),
-                                kind,
-                                status,
-                            });
+                    let now = Instant::now();
+                    let stream_due = ctx
+                        .last_stream_observed_at
+                        .map(|at| now.saturating_duration_since(at) >= STATUS_THROTTLE)
+                        .unwrap_or(true);
+                    if stream_due {
+                        ctx.last_stream_observed_at = Some(now);
+                        if let Some(transition) = ctx
+                            .agent_state
+                            .observe(infer_stream_observation(kind, &ctx.tail), now)
+                        {
+                            sides.push(Self::agent_side_effect(pane_id, ctx, transition));
                         }
                     }
                 }
             }
-        }
-
-        Self::dispatch_side_effects(sink, sides);
-        if !batch.chunks.is_empty() {
-            Self::contain_aggregator_panic("output callback", || {
-                sink.output(&batch);
-            });
         }
     }
 
@@ -934,6 +1058,15 @@ impl PtyManager {
                         sink.block_completed(&block);
                     });
                 }
+                PaneSideEffect::AgentDetected {
+                    pane_id,
+                    session_id,
+                    kind,
+                } => {
+                    Self::contain_aggregator_panic("agent detection callback", || {
+                        sink.agent_detected(&pane_id, &session_id, kind);
+                    });
+                }
                 PaneSideEffect::Agent {
                     pane_id,
                     session_id,
@@ -988,7 +1121,7 @@ impl PtyManager {
         generation: u64,
         code: Option<i32>,
     ) {
-        let completed = {
+        let (completed, agent_side) = {
             let mut panes = panes.lock();
             let Some(ctx) = panes.get_mut(pane_id) else {
                 return;
@@ -997,25 +1130,33 @@ impl PtyManager {
                 return;
             }
             ctx.exit_code = code;
-            ctx.tracker.close_block(code).and_then(|(cmd, out, _)| {
-                (!out.is_empty() || !cmd.is_empty())
-                    .then(|| {
-                        make_block(
-                            &ctx.project_id,
-                            &ctx.session_id,
-                            pane_id,
-                            cmd,
-                            out,
-                            code,
-                            ctx.agent_kind,
-                        )
-                    })
-            })
+            let completed = ctx.tracker.close_block(code).and_then(|(cmd, out, _)| {
+                (!out.is_empty() || !cmd.is_empty()).then(|| {
+                    make_block(
+                        &ctx.project_id,
+                        &ctx.session_id,
+                        pane_id,
+                        cmd,
+                        out,
+                        code,
+                        ctx.agent_kind,
+                    )
+                })
+            });
+            let agent_side = ctx.agent_kind.and_then(|_| {
+                ctx.agent_state
+                    .finish()
+                    .map(|transition| Self::agent_side_effect(pane_id, ctx, transition))
+            });
+            (completed, agent_side)
         };
         if let Some(block) = completed {
             Self::contain_aggregator_panic("EOF block callback", || {
                 sink.block_completed(&block);
             });
+        }
+        if let Some(agent_side) = agent_side {
+            Self::dispatch_side_effects(sink, vec![agent_side]);
         }
         Self::contain_aggregator_panic("exit callback", || {
             sink.exit(pane_id, code);

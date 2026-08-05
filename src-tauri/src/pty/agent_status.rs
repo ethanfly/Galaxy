@@ -48,6 +48,9 @@ impl AgentStateMachine {
         observation: AgentObservation,
         observed_at: Instant,
     ) -> Option<AgentTransition> {
+        if self.stable == AgentStatus::Done {
+            return None;
+        }
         match observation {
             AgentObservation::Unknown => None,
             AgentObservation::Working => {
@@ -237,9 +240,13 @@ fn is_idle_line(kind: AgentKind, line: &str) -> bool {
     let line = line.trim_start();
     match kind {
         AgentKind::Codex => {
-            line.starts_with(">> ")
+            line == ">>"
+                || line.starts_with(">> ")
+                || line == "\u{00bb}"
                 || line.starts_with("\u{00bb} ")
+                || line == "\u{203a}"
                 || line.starts_with("\u{203a} ")
+                || line == "\u{276f}"
                 || line.starts_with("\u{276f} ")
         }
         AgentKind::ClaudeCode => line == "\u{276f}" || line.starts_with("\u{276f} "),
@@ -292,6 +299,12 @@ mod tests {
             infer_screen_observation(AgentKind::Codex, ">> Run /review on my changes"),
             AgentObservation::Idle
         );
+        for prompt in [">>", "\u{00bb}", "\u{203a}", "\u{276f}"] {
+            assert_eq!(
+                infer_screen_observation(AgentKind::Codex, prompt),
+                AgentObservation::Idle
+            );
+        }
     }
 
     #[test]
@@ -394,5 +407,14 @@ mod tests {
             })
         );
         assert_eq!(machine.finish(), None);
+        assert_eq!(
+            machine.observe(AgentObservation::Working, start + Duration::from_secs(1)),
+            None
+        );
+        assert_eq!(
+            machine.observe(AgentObservation::Idle, start + Duration::from_secs(2)),
+            None
+        );
+        assert_eq!(machine.stable(), AgentStatus::Done);
     }
 }

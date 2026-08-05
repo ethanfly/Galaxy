@@ -34,6 +34,7 @@ macro_rules! all_commands {
             crate::commands::pty_cmds::pty_broadcast,
             crate::commands::pty_cmds::pty_resize,
             crate::commands::pty_cmds::pty_replay,
+            crate::commands::pty_cmds::pty_observe_screen,
             crate::commands::pty_cmds::pty_kill,
             // features
             crate::commands::features::block_list,

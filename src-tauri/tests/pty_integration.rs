@@ -14,11 +14,18 @@ use galaxy_terminal_lib::error::AppError;
 use galaxy_terminal_lib::pty::manager::{OutputBatch, PtyEventSink, TriggerFire};
 use galaxy_terminal_lib::pty::{PortablePtyBackend, PtyBackend, PtyManager, PtyProcess, PtySpec};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CollectedAgentEvent {
+    Detected(AgentKind),
+    Status(AgentStatus),
+}
+
 struct CollectSink {
     batches: Mutex<Vec<OutputBatch>>,
     exits: Mutex<Vec<(String, Option<i32>)>>,
     titles: Mutex<Vec<(String, String)>>,
     blocks: Mutex<Vec<CommandBlock>>,
+    agent_events: Mutex<Vec<CollectedAgentEvent>>,
     output_chars: AtomicU64,
 }
 
@@ -29,6 +36,7 @@ impl CollectSink {
             exits: Mutex::new(Vec::new()),
             titles: Mutex::new(Vec::new()),
             blocks: Mutex::new(Vec::new()),
+            agent_events: Mutex::new(Vec::new()),
             output_chars: AtomicU64::new(0),
         }
     }
@@ -66,7 +74,18 @@ impl PtyEventSink for CollectSink {
     fn block_completed(&self, block: &CommandBlock) {
         self.blocks.lock().unwrap().push(block.clone());
     }
-    fn agent_status(&self, _p: &str, _s: &str, _k: AgentKind, _st: AgentStatus) {}
+    fn agent_detected(&self, _p: &str, _s: &str, kind: AgentKind) {
+        self.agent_events
+            .lock()
+            .unwrap()
+            .push(CollectedAgentEvent::Detected(kind));
+    }
+    fn agent_status(&self, _p: &str, _s: &str, _k: AgentKind, status: AgentStatus) {
+        self.agent_events
+            .lock()
+            .unwrap()
+            .push(CollectedAgentEvent::Status(status));
+    }
     fn trigger_fired(&self, _f: &TriggerFire) {}
     fn pty_error(&self, _p: &str, _m: &str) {}
 }
@@ -461,6 +480,222 @@ impl PtyEventSink for PanicsTitleSink {
     fn agent_status(&self, _p: &str, _s: &str, _k: AgentKind, _st: AgentStatus) {}
     fn trigger_fired(&self, _f: &TriggerFire) {}
     fn pty_error(&self, _p: &str, _m: &str) {}
+}
+
+#[test]
+fn agent_status_observation_validates_pane_kind_and_size() {
+    let reader = Arc::new(GatedReaderState::default());
+    let sink = Arc::new(CollectSink::new());
+    let manager = PtyManager::new(
+        Arc::new(GatedBackend(Mutex::new(VecDeque::from([reader.clone()])))),
+        sink.clone(),
+    );
+
+    assert!(matches!(
+        manager.observe_screen("missing", ">>".into()),
+        Err(AppError::NotFound(_))
+    ));
+    manager
+        .spawn_pane(
+            "pane-shell",
+            "session-1",
+            "project-1",
+            &cmd_spec(),
+            None,
+            None,
+        )
+        .expect("spawn non-Agent pane");
+    manager
+        .observe_screen("pane-shell", ">>".into())
+        .expect("non-Agent observations are ignored");
+    assert!(matches!(
+        manager.observe_screen("pane-shell", "x".repeat(4097)),
+        Err(AppError::InvalidInput(_))
+    ));
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(sink.agent_events.lock().unwrap().is_empty());
+
+    manager.shutdown();
+    BlockingIoState::set(&reader.release_reader);
+}
+
+#[test]
+fn agent_status_observations_confirm_idle_and_dedupe_working_epochs() {
+    let io = Arc::new(BlockingIoState::default());
+    let sink = Arc::new(CollectSink::new());
+    let manager = PtyManager::new(Arc::new(BlockingBackend(io.clone())), sink.clone());
+    manager
+        .spawn_pane(
+            "pane-agent-status",
+            "session-1",
+            "project-1",
+            &cmd_spec(),
+            Some(AgentKind::Codex),
+            None,
+        )
+        .expect("spawn Agent pane");
+
+    let working = ">> Run /review\n* Working (2s * esc to interrupt)";
+    manager
+        .observe_screen("pane-agent-status", working.into())
+        .unwrap();
+    assert!(wait_for(1_000, || sink
+        .agent_events
+        .lock()
+        .unwrap()
+        .contains(&CollectedAgentEvent::Status(AgentStatus::Working))));
+    assert!(matches!(
+        manager.observe_screen("pane-agent-status", "x".repeat(4097)),
+        Err(AppError::InvalidInput(_))
+    ));
+
+    manager
+        .observe_screen("pane-agent-status", ">>".into())
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        sink.agent_events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| **event == CollectedAgentEvent::Status(AgentStatus::Idle))
+            .count(),
+        0
+    );
+    std::thread::sleep(Duration::from_millis(450));
+    manager
+        .observe_screen("pane-agent-status", ">>".into())
+        .unwrap();
+    assert!(wait_for(1_000, || sink
+        .agent_events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| **event == CollectedAgentEvent::Status(AgentStatus::Idle))
+        .count()
+        == 1));
+
+    manager
+        .observe_screen("pane-agent-status", ">>".into())
+        .unwrap();
+    manager
+        .observe_screen("pane-agent-status", working.into())
+        .unwrap();
+    assert!(wait_for(1_000, || sink
+        .agent_events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| **event == CollectedAgentEvent::Status(AgentStatus::Working))
+        .count()
+        == 2));
+    manager
+        .observe_screen("pane-agent-status", ">>".into())
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(550));
+    manager
+        .observe_screen("pane-agent-status", ">>".into())
+        .unwrap();
+    assert!(wait_for(1_000, || sink
+        .agent_events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| **event == CollectedAgentEvent::Status(AgentStatus::Idle))
+        .count()
+        == 2));
+
+    manager.shutdown();
+}
+
+#[test]
+fn agent_status_detection_is_serialized_before_newer_working_status() {
+    let reader = Arc::new(GatedReaderState::default());
+    let sink = Arc::new(CollectSink::new());
+    let manager = PtyManager::new(
+        Arc::new(GatedBackend(Mutex::new(VecDeque::from([reader.clone()])))),
+        sink.clone(),
+    );
+    manager
+        .spawn_pane(
+            "pane-detected-agent",
+            "session-1",
+            "project-1",
+            &cmd_spec(),
+            None,
+            None,
+        )
+        .unwrap();
+
+    manager
+        .write_input("pane-detected-agent", "codex\r")
+        .unwrap();
+    manager
+        .observe_screen(
+            "pane-detected-agent",
+            ">> Continue\n* Working (1s * esc to interrupt)".into(),
+        )
+        .unwrap();
+    assert!(wait_for(1_000, || sink.agent_events.lock().unwrap().len() >= 2));
+    assert_eq!(
+        *sink.agent_events.lock().unwrap(),
+        vec![
+            CollectedAgentEvent::Detected(AgentKind::Codex),
+            CollectedAgentEvent::Status(AgentStatus::Working),
+        ]
+    );
+
+    manager.shutdown();
+    BlockingIoState::set(&reader.release_reader);
+}
+
+#[test]
+fn agent_status_process_exit_emits_done_once() {
+    let io = Arc::new(BlockingIoState::default());
+    let sink = Arc::new(CollectSink::new());
+    let manager = PtyManager::new(Arc::new(BlockingBackend(io.clone())), sink.clone());
+    manager
+        .spawn_pane(
+            "pane-agent-exit",
+            "session-1",
+            "project-1",
+            &cmd_spec(),
+            Some(AgentKind::Codex),
+            None,
+        )
+        .unwrap();
+    manager
+        .observe_screen(
+            "pane-agent-exit",
+            ">> Continue\n* Working (1s * esc to interrupt)".into(),
+        )
+        .unwrap();
+    assert!(wait_for(1_000, || sink
+        .agent_events
+        .lock()
+        .unwrap()
+        .contains(&CollectedAgentEvent::Status(AgentStatus::Working))));
+
+    io.report_exit.store(true, Ordering::SeqCst);
+    assert!(wait_for(2_000, || sink
+        .agent_events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|event| **event == CollectedAgentEvent::Status(AgentStatus::Done))
+        .count()
+        == 1));
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(
+        sink.agent_events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|event| **event == CollectedAgentEvent::Status(AgentStatus::Done))
+            .count(),
+        1
+    );
+    manager.shutdown();
 }
 
 #[test]

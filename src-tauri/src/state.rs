@@ -183,6 +183,77 @@ impl AppState {
 
 // ------------------------------------------------------------------ sink
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentNotificationKind {
+    Completed,
+    Blocked,
+}
+
+fn agent_notification(
+    previous: AgentStatus,
+    current: AgentStatus,
+) -> Option<AgentNotificationKind> {
+    if previous == current {
+        return None;
+    }
+    match (previous, current) {
+        (AgentStatus::Working, AgentStatus::Idle) | (AgentStatus::Working, AgentStatus::Done) => {
+            Some(AgentNotificationKind::Completed)
+        }
+        (_, AgentStatus::Blocked) => Some(AgentNotificationKind::Blocked),
+        _ => None,
+    }
+}
+
+fn notification_copy(
+    previous: AgentStatus,
+    current: AgentStatus,
+    kind: AgentKind,
+) -> Option<(String, String)> {
+    match agent_notification(previous, current)? {
+        AgentNotificationKind::Completed => Some((
+            format!("{} 已完成", kind.label()),
+            "Agent 任务结束，可以查看结果".to_string(),
+        )),
+        AgentNotificationKind::Blocked => Some((
+            format!("{} 等待确认", kind.label()),
+            "Agent 需要授权或输入后才能继续".to_string(),
+        )),
+    }
+}
+
+fn update_pane_agent_kind(state: &AppState, pane_id: &str, kind: AgentKind) -> bool {
+    let mut store = state.store.write();
+    for session in store.sessions.iter_mut() {
+        if let Some(pane) = session.layout.find_pane_mut(pane_id) {
+            if pane.agent_kind != Some(kind) {
+                pane.agent_kind = Some(kind);
+                return true;
+            }
+            break;
+        }
+    }
+    false
+}
+
+fn emit_agent_status(
+    state: &AppState,
+    pane_id: &str,
+    session_id: &str,
+    kind: AgentKind,
+    status: AgentStatus,
+) {
+    let _ = state.app.emit(
+        events::AGENT_STATUS,
+        serde_json::json!({
+            "paneId": pane_id,
+            "sessionId": session_id,
+            "agentKind": kind,
+            "status": status,
+        }),
+    );
+}
+
 struct Sink {
     state: Arc<AppState>,
 }
@@ -193,7 +264,6 @@ impl PtyEventSink for Sink {
     }
 
     fn exit(&self, pane_id: &str, code: Option<i32>) {
-        self.state.pty().mark_exit(pane_id, code);
         {
             let mut store = self.state.store.write();
             for s in store.sessions.iter_mut() {
@@ -237,63 +307,38 @@ impl PtyEventSink for Sink {
         );
     }
 
+    fn agent_detected(&self, pane_id: &str, session_id: &str, kind: AgentKind) {
+        if update_pane_agent_kind(&self.state, pane_id, kind) {
+            self.state.persist_debounced();
+        }
+        let status = {
+            let mut statuses = self.state.agent_status.write();
+            *statuses
+                .entry(pane_id.to_string())
+                .or_insert(AgentStatus::Idle)
+        };
+        emit_agent_status(&self.state, pane_id, session_id, kind, status);
+    }
+
     fn agent_status(&self, pane_id: &str, session_id: &str, kind: AgentKind, status: AgentStatus) {
-        let prev = self
-            .state
-            .agent_status
-            .read()
-            .get(pane_id)
-            .copied()
-            .unwrap_or(AgentStatus::Idle);
-        self.state
-            .agent_status
-            .write()
-            .insert(pane_id.to_string(), status);
+        let (prev, status_changed) = {
+            let mut statuses = self.state.agent_status.write();
+            let prev = statuses.get(pane_id).copied().unwrap_or(AgentStatus::Idle);
+            statuses.insert(pane_id.to_string(), status);
+            (prev, prev != status)
+        };
         // Agent badge detection also flows through here: keep the pane meta.
         // IMPORTANT: never call persist* while holding store.write() — persist
         // takes store.read() and parking_lot RwLock will deadlock (app freeze
         // after launching an agent command).
-        let mut kind_changed = false;
-        {
-            let mut store = self.state.store.write();
-            for s in store.sessions.iter_mut() {
-                if let Some(pane) = s.layout.find_pane_mut(pane_id) {
-                    if pane.agent_kind != Some(kind) {
-                        pane.agent_kind = Some(kind);
-                        kind_changed = true;
-                    }
-                    break;
-                }
-            }
-        }
-        if kind_changed {
+        if update_pane_agent_kind(&self.state, pane_id, kind) {
             self.state.persist_debounced();
         }
-        let _ = self.state.app.emit(
-            events::AGENT_STATUS,
-            serde_json::json!({
-                "paneId": pane_id,
-                "sessionId": session_id,
-                "agentKind": kind,
-                "status": status,
-            }),
-        );
+        emit_agent_status(&self.state, pane_id, session_id, kind, status);
         // Notify on working → idle/done or → blocked transitions (§5.4).
         let notify_enabled = self.state.store.read().config.agent_notifications;
-        if notify_enabled {
-            let (title, body) = match (prev, status) {
-                (AgentStatus::Working, AgentStatus::Idle)
-                | (AgentStatus::Working, AgentStatus::Done) => (
-                    format!("{} 已完成", kind.label()),
-                    "Agent 任务结束，可以查看结果".to_string(),
-                ),
-                (_, AgentStatus::Blocked) => (
-                    format!("{} 等待确认", kind.label()),
-                    "Agent 需要授权或输入后才能继续".to_string(),
-                ),
-                _ => (String::new(), String::new()),
-            };
-            if !title.is_empty() {
+        if notify_enabled && status_changed {
+            if let Some((title, body)) = notification_copy(prev, status, kind) {
                 let project_id = self
                     .state
                     .store
@@ -468,5 +513,58 @@ pub fn validate_external_url(url: &str) -> Result<(), AppError> {
         Ok(())
     } else {
         Err(AppError::InvalidInput(format!("不允许的链接协议: {url}")))
+    }
+}
+
+#[cfg(test)]
+mod agent_notification_tests {
+    use super::*;
+
+    #[test]
+    fn completion_requires_leaving_working() {
+        assert_eq!(
+            agent_notification(AgentStatus::Working, AgentStatus::Idle),
+            Some(AgentNotificationKind::Completed)
+        );
+        assert_eq!(
+            agent_notification(AgentStatus::Working, AgentStatus::Done),
+            Some(AgentNotificationKind::Completed)
+        );
+        assert_eq!(
+            agent_notification(AgentStatus::Idle, AgentStatus::Done),
+            None
+        );
+    }
+
+    #[test]
+    fn blocked_notifies_only_on_entry() {
+        assert_eq!(
+            agent_notification(AgentStatus::Working, AgentStatus::Blocked),
+            Some(AgentNotificationKind::Blocked)
+        );
+        assert_eq!(
+            agent_notification(AgentStatus::Idle, AgentStatus::Blocked),
+            Some(AgentNotificationKind::Blocked)
+        );
+        assert_eq!(
+            agent_notification(AgentStatus::Blocked, AgentStatus::Blocked),
+            None
+        );
+    }
+
+    #[test]
+    fn detection_and_repeated_states_do_not_notify() {
+        assert_eq!(
+            agent_notification(AgentStatus::Idle, AgentStatus::Idle),
+            None
+        );
+        assert_eq!(
+            agent_notification(AgentStatus::Done, AgentStatus::Done),
+            None
+        );
+        assert_eq!(
+            agent_notification(AgentStatus::Blocked, AgentStatus::Working),
+            None
+        );
     }
 }
