@@ -1,6 +1,6 @@
 # Appearance and Agent Status Corrections Design
 
-**Status:** Approved in conversation, pending written-spec review
+**Status:** Approved for implementation
 **Date:** 2026-08-05
 **Scope:** UI and terminal font sizing, terminal cursor behavior, and live Agent completion notifications
 
