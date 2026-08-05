@@ -120,4 +120,20 @@ describe("TitleBar resize listener lifecycle", () => {
     expect(screen.getByRole("button", { name: "最大化" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "关闭" })).toBeTruthy();
   });
+
+  it("keeps settings and window controls as separate titlebar groups", () => {
+    const { container } = render(<TitleBar />);
+
+    const settings = container.querySelector(".titlebar-settings");
+    const windowControls = container.querySelector(".window-controls");
+    const tools = container.querySelector(".titlebar-tools");
+
+    expect(settings).toBeTruthy();
+    expect(windowControls).toBeTruthy();
+    expect(tools?.contains(settings)).toBe(true);
+    expect(windowControls?.contains(settings)).toBe(false);
+    expect(settings?.textContent).toContain(t("settings"));
+    // Settings sits immediately before native window chrome, not inside it.
+    expect(tools?.nextElementSibling).toBe(windowControls);
+  });
 });
