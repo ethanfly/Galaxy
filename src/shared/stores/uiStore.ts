@@ -1,6 +1,8 @@
 // Pure UI state (Zustand only — no business truth here, spec §3.1).
 import { create } from "zustand";
 
+import type { Appearance } from "../appearance";
+
 export type RightPanelTab = "agent" | "git" | "history" | "notifications";
 export type WorkspaceView = "terminal" | "insights";
 export type SettingsSection =
@@ -22,6 +24,7 @@ interface UiState {
   paletteOpen: boolean;
   settingsOpen: boolean;
   settingsSection: SettingsSection;
+  appearancePreview: Appearance | null;
   recoveryDialogOpen: boolean;
   workflowRunId: string | null;
   movePaneId: string | null;
@@ -40,6 +43,7 @@ interface UiState {
   closeOverlays(): void;
   openSettings(section?: SettingsSection): void;
   closeSettings(): void;
+  setAppearancePreview(preview: Appearance | null): void;
   openRecovery(): void;
   closeRecovery(): void;
   openWorkflowRun(id: string): void;
@@ -59,6 +63,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   paletteOpen: false,
   settingsOpen: false,
   settingsSection: "general",
+  appearancePreview: null,
   recoveryDialogOpen: false,
   workflowRunId: null,
   movePaneId: null,
@@ -118,7 +123,10 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ settingsOpen: true, settingsSection: section });
   },
   closeSettings() {
-    set({ settingsOpen: false });
+    set({ settingsOpen: false, appearancePreview: null });
+  },
+  setAppearancePreview(preview) {
+    set({ appearancePreview: preview });
   },
   openRecovery() {
     set({ recoveryDialogOpen: true });

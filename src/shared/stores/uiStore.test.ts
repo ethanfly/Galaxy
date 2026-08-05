@@ -33,3 +33,45 @@ describe("uiStore workspace navigation", () => {
     expect(useUiStore.getState().contextSidebarOpen).toBe(true);
   });
 });
+
+describe("uiStore appearance preview", () => {
+  beforeEach(() => {
+    useUiStore.setState({ appearancePreview: null, settingsOpen: false });
+  });
+
+  it("starts without an appearance preview", () => {
+    expect(useUiStore.getInitialState().appearancePreview).toBeNull();
+  });
+
+  it("stores a complete appearance preview pair", () => {
+    useUiStore.getState().setAppearancePreview({ terminalFontSize: 20, uiFontSize: 18 });
+
+    expect(useUiStore.getState().appearancePreview).toEqual({
+      terminalFontSize: 20,
+      uiFontSize: 18,
+    });
+  });
+
+  it("clears the appearance preview when settings close", () => {
+    useUiStore.setState({
+      settingsOpen: true,
+      appearancePreview: { terminalFontSize: 20, uiFontSize: 18 },
+    });
+
+    useUiStore.getState().closeSettings();
+
+    expect(useUiStore.getState().settingsOpen).toBe(false);
+    expect(useUiStore.getState().appearancePreview).toBeNull();
+  });
+
+  it("retains an active preview when navigating to a settings chapter", () => {
+    useUiStore.setState({ appearancePreview: { terminalFontSize: 20, uiFontSize: 18 } });
+
+    useUiStore.getState().openSettings("templates");
+
+    expect(useUiStore.getState().appearancePreview).toEqual({
+      terminalFontSize: 20,
+      uiFontSize: 18,
+    });
+  });
+});

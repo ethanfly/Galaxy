@@ -37,6 +37,7 @@ export function SettingsModal() {
   const section = useUiStore((s) => s.settingsSection);
   const setSection = useUiStore((s) => s.openSettings);
   const close = useUiStore((s) => s.closeSettings);
+  const setAppearancePreview = useUiStore((s) => s.setAppearancePreview);
   const config = useAppStore((s) => s.config);
   const setConfig = useAppStore((s) => s.setConfig);
   const error = useAppStore((s) => s.error);
@@ -44,13 +45,16 @@ export function SettingsModal() {
 
   useEffect(() => {
     if (open && config) {
+      setAppearancePreview(null);
       setDraft(structuredClone(config));
       // Stale global errors (e.g. a prior failed save) should not stick on reopen.
       if (useAppStore.getState().error) {
         useAppStore.setState({ error: null });
       }
     }
-  }, [open, config]);
+  }, [open, config, setAppearancePreview]);
+
+  useEffect(() => () => setAppearancePreview(null), [setAppearancePreview]);
 
   if (!open || !draft) return null;
 
@@ -58,6 +62,21 @@ export function SettingsModal() {
     setLanguage(draft.language);
     const ok = await setConfig(draft);
     if (ok) close();
+  };
+
+  const changeDraft = (next: AppConfig) => {
+    setDraft(next);
+    if (
+      next.terminalFontSize >= 8 &&
+      next.terminalFontSize <= 32 &&
+      next.uiFontSize >= 8 &&
+      next.uiFontSize <= 24
+    ) {
+      setAppearancePreview({
+        terminalFontSize: next.terminalFontSize,
+        uiFontSize: next.uiFontSize,
+      });
+    }
   };
 
   return (
@@ -83,11 +102,11 @@ export function SettingsModal() {
               <span>{error}</span>
             </div>
           )}
-          {section === "general" && <GeneralSection draft={draft} onChange={setDraft} />}
-          {section === "workflows" && <WorkflowsSection draft={draft} onChange={setDraft} />}
-          {section === "templates" && <TemplatesSection draft={draft} onChange={setDraft} />}
-          {section === "triggers" && <TriggersSection draft={draft} onChange={setDraft} />}
-          {section === "shortcuts" && <ShortcutsSection draft={draft} onChange={setDraft} />}
+          {section === "general" && <GeneralSection draft={draft} onChange={changeDraft} />}
+          {section === "workflows" && <WorkflowsSection draft={draft} onChange={changeDraft} />}
+          {section === "templates" && <TemplatesSection draft={draft} onChange={changeDraft} />}
+          {section === "triggers" && <TriggersSection draft={draft} onChange={changeDraft} />}
+          {section === "shortcuts" && <ShortcutsSection draft={draft} onChange={changeDraft} />}
           {section === "diagnostics" && <DiagnosticsSection />}
         </div>
       </div>
