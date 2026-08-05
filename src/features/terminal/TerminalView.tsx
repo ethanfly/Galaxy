@@ -26,6 +26,7 @@ import { t } from "../../shared/i18n";
 import { layoutPanes } from "../../shared/utils";
 import { GALAXY_THEME } from "./terminalTheme";
 import { applyTerminalFontSize, terminalOptions } from "./terminalAppearance";
+import { installTerminalClipboard } from "./terminalClipboard";
 import { createAgentScreenObserver, readAgentScreen } from "./agentScreenObserver";
 
 export const searchAddons = new Map<string, SearchAddon>();
@@ -255,6 +256,8 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
         void ptyWrite(pane.id, data);
       }
     });
+    // Select-to-copy (and Ctrl+C / Ctrl+Shift+C when a selection exists).
+    const disposeClipboard = installTerminalClipboard(term);
     const bellSub = term.onBell(() => {
       useTerminalStore.getState().addMark(pane.id);
     });
@@ -297,6 +300,7 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       cancelAnimationFrame(initialFit);
       ro.disconnect();
       inputSub.dispose();
+      disposeClipboard();
       bellSub.dispose();
       renderSub.dispose();
       unsubAgentRecognition();

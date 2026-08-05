@@ -188,13 +188,19 @@ function PaneCell({ pane, session }: { pane: Pane; session: Session }) {
       className={`pane-cell ${focused ? "focused" : ""}`}
       onClick={() => setFocusedPane(session.id, pane.id)}
       onPointerDown={() => setFocusedPane(session.id, pane.id)}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        setFocusedPane(session.id, pane.id);
-        setMenu({ x: e.clientX, y: e.clientY });
-      }}
     >
-      <div className="pane-chrome">
+      {/*
+        Context menu lives on chrome only so the terminal surface keeps native
+        right-click select-word / select-to-copy behavior (spec §3.2).
+      */}
+      <div
+        className="pane-chrome"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setFocusedPane(session.id, pane.id);
+          setMenu({ x: e.clientX, y: e.clientY });
+        }}
+      >
         <span className="pane-shell-icon" style={{ color: "var(--text-lo)" }}>
           <IconPrompt size={12} />
         </span>
