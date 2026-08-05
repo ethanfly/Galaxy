@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { ShellProfile } from "../ipc/types";
+
 const ipcMocks = vi.hoisted(() => {
   let resolveRestore: ((n: number) => void) | null = null;
   return {
@@ -59,7 +61,9 @@ const ipcMocks = vi.hoisted(() => {
       triggerNotifications: true,
       hardwareAcceleration: true,
     })),
-    profilesList: vi.fn(async () => []),
+    // Explicit return type so mockResolvedValueOnce accepts ShellProfile objects
+    // (bare `[]` is inferred as never[] and breaks `tsc` during tauri build).
+    profilesList: vi.fn(async (): Promise<ShellProfile[]> => []),
     notificationList: vi.fn(async () => [
       { id: "n1", at: "2026-01-01T00:00:00Z", title: "t", body: "b", read: false },
     ]),
@@ -174,17 +178,16 @@ describe("appStore init", () => {
   it("refreshProfiles replaces the shell list from IPC", async () => {
     await useAppStore.getState().init();
     ipcMocks.finishRestore(1);
-    ipcMocks.profilesList.mockResolvedValueOnce([
-      {
-        id: "pwsh",
-        name: "PowerShell 7",
-        program: "C:\\pwsh.exe",
-        args: [],
-        icon: null,
-        env: {},
-        source: "detected",
-      },
-    ]);
+    const pwsh: ShellProfile = {
+      id: "pwsh",
+      name: "PowerShell 7",
+      program: "C:\\pwsh.exe",
+      args: [],
+      icon: null,
+      env: {},
+      source: "detected",
+    };
+    ipcMocks.profilesList.mockResolvedValueOnce([pwsh]);
     await useAppStore.getState().refreshProfiles();
     expect(useAppStore.getState().profiles.map((p) => p.id)).toEqual(["pwsh"]);
   });
