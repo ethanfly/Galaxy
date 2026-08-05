@@ -13,13 +13,14 @@ import {
 } from "../../shared/icons/Icons";
 import { layoutSetRatio, paneClose, paneSplit } from "../../shared/ipc/client";
 import type { LayoutNodeRust, Pane, Session } from "../../shared/ipc/types";
-import { TerminalView } from "./TerminalView";
+import { TerminalView, terminals } from "./TerminalView";
 import { ContextMenu } from "../tabs/TabBar";
 import { t } from "../../shared/i18n";
 import { useAppStore } from "../../shared/stores/appStore";
 import { useTerminalStore } from "../../shared/stores/terminalStore";
 import { useUiStore } from "../../shared/stores/uiStore";
 import { layoutPanes, unwrapPane } from "../../shared/utils";
+import { copyTerminalSelection, pasteTerminalClipboard } from "./terminalClipboard";
 
 export function Workspace() {
   const sessions = useAppStore((s) => s.sessions);
@@ -169,7 +170,7 @@ function PaneCell({ pane, session }: { pane: Pane; session: Session }) {
   const updateSessionLocal = useAppStore((s) => s.updateSessionLocal);
   const setSessionSync = useAppStore((s) => s.setSessionSync);
   const openMovePane = useUiStore((s) => s.openMovePane);
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null);
 
   const doSplit = async (direction: "row" | "column") => {
     const updated = await paneSplit(pane.id, direction);
@@ -183,24 +184,26 @@ function PaneCell({ pane, session }: { pane: Pane; session: Session }) {
     await useAppStore.getState().refreshSessions();
   };
 
+  const openContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setFocusedPane(session.id, pane.id);
+    // rightClickSelectsWord may have just updated the selection; snapshot for the menu.
+    const term = terminals.get(pane.id);
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      hasSelection: Boolean(term?.hasSelection() && term.getSelection()),
+    });
+  };
+
   return (
     <div
       className={`pane-cell ${focused ? "focused" : ""}`}
       onClick={() => setFocusedPane(session.id, pane.id)}
       onPointerDown={() => setFocusedPane(session.id, pane.id)}
+      onContextMenu={openContextMenu}
     >
-      {/*
-        Context menu lives on chrome only so the terminal surface keeps native
-        right-click select-word / select-to-copy behavior (spec §3.2).
-      */}
-      <div
-        className="pane-chrome"
-        onContextMenu={(e) => {
-          e.preventDefault();
-          setFocusedPane(session.id, pane.id);
-          setMenu({ x: e.clientX, y: e.clientY });
-        }}
-      >
+      <div className="pane-chrome">
         <span className="pane-shell-icon" style={{ color: "var(--text-lo)" }}>
           <IconPrompt size={12} />
         </span>
@@ -242,6 +245,22 @@ function PaneCell({ pane, session }: { pane: Pane; session: Session }) {
           y={menu.y}
           onClose={() => setMenu(null)}
           items={[
+            {
+              label: t("copy"),
+              disabled: !menu.hasSelection,
+              onClick: () => {
+                const term = terminals.get(pane.id);
+                if (term) copyTerminalSelection(term);
+              },
+            },
+            {
+              label: t("paste"),
+              onClick: () => {
+                const term = terminals.get(pane.id);
+                if (term) void pasteTerminalClipboard(term);
+              },
+            },
+            { type: "separator" },
             { label: t("splitRight"), onClick: () => void doSplit("row") },
             { label: t("splitDown"), onClick: () => void doSplit("column") },
             { label: t("movePane"), onClick: () => openMovePane(pane.id) },

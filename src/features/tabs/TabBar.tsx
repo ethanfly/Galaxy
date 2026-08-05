@@ -247,6 +247,10 @@ function tabTitle(title: string, lamp: TabLamp, agent?: string | null): string {
   return parts.join(" · ");
 }
 
+export type ContextMenuItem =
+  | { type?: "item"; label: string; onClick: () => void; danger?: boolean; disabled?: boolean }
+  | { type: "separator" };
+
 export function ContextMenu({
   x,
   y,
@@ -255,7 +259,7 @@ export function ContextMenu({
 }: {
   x: number;
   y: number;
-  items: Array<{ label: string; onClick: () => void; danger?: boolean; disabled?: boolean }>;
+  items: ContextMenuItem[];
   onClose: () => void;
 }) {
   return (
@@ -281,32 +285,50 @@ export function ContextMenu({
           boxShadow: "0 8px 30px rgba(0,0,0,.5)",
         }}
       >
-        {items.map((item) => (
-          <button
-            key={item.label}
-            role="menuitem"
-            disabled={item.disabled}
-            style={{
-              display: "block",
-              width: "100%",
-              textAlign: "left",
-              border: 0,
-              background: "transparent",
-              color: item.danger ? "var(--red-400)" : "var(--text-md)",
-              padding: "6px 10px",
-              cursor: item.disabled ? "default" : "pointer",
-              borderRadius: 2,
-              opacity: item.disabled ? 0.5 : 1,
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--space-3)")}
-            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-            onClick={() => {
-              item.onClick();
-            }}
-          >
-            {item.label}
-          </button>
-        ))}
+        {items.map((item, index) => {
+          if (item.type === "separator") {
+            return (
+              <div
+                key={`sep-${index}`}
+                role="separator"
+                style={{
+                  height: 1,
+                  margin: "4px 6px",
+                  background: "var(--border-strong)",
+                }}
+              />
+            );
+          }
+          return (
+            <button
+              key={item.label}
+              role="menuitem"
+              disabled={item.disabled}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                border: 0,
+                background: "transparent",
+                color: item.danger ? "var(--red-400)" : "var(--text-md)",
+                padding: "6px 10px",
+                cursor: item.disabled ? "default" : "pointer",
+                borderRadius: 2,
+                opacity: item.disabled ? 0.5 : 1,
+              }}
+              onMouseEnter={(e) => {
+                if (!item.disabled) e.currentTarget.style.background = "var(--space-3)";
+              }}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              onClick={() => {
+                if (item.disabled) return;
+                item.onClick();
+              }}
+            >
+              {item.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );

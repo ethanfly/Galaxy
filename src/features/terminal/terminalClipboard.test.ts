@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   copyTerminalSelection,
   installTerminalClipboard,
+  pasteTerminalClipboard,
+  readClipboardText,
   writeClipboardText,
 } from "./terminalClipboard";
 
@@ -82,6 +84,26 @@ describe("writeClipboardText", () => {
   });
 });
 
+describe("readClipboardText", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("returns clipboard text when available", async () => {
+    const readText = vi.fn().mockResolvedValue("pasted");
+    vi.spyOn(navigator.clipboard, "readText").mockImplementation(readText);
+
+    await expect(readClipboardText()).resolves.toBe("pasted");
+    expect(readText).toHaveBeenCalled();
+  });
+
+  it("returns empty string when clipboard read fails", async () => {
+    vi.spyOn(navigator.clipboard, "readText").mockRejectedValue(new Error("denied"));
+
+    await expect(readClipboardText()).resolves.toBe("");
+  });
+});
+
 describe("copyTerminalSelection", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -109,6 +131,29 @@ describe("copyTerminalSelection", () => {
 
     expect(copyTerminalSelection(term as never)).toBe(false);
     expect(writeText).not.toHaveBeenCalled();
+  });
+});
+
+describe("pasteTerminalClipboard", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("pastes non-empty clipboard text via term.paste", async () => {
+    vi.spyOn(navigator.clipboard, "readText").mockResolvedValue("hello paste");
+    const paste = vi.fn();
+    const term = { paste };
+
+    await expect(pasteTerminalClipboard(term as never)).resolves.toBe(true);
+    expect(paste).toHaveBeenCalledWith("hello paste");
+  });
+
+  it("returns false when clipboard is empty", async () => {
+    vi.spyOn(navigator.clipboard, "readText").mockResolvedValue("");
+    const paste = vi.fn();
+
+    await expect(pasteTerminalClipboard({ paste } as never)).resolves.toBe(false);
+    expect(paste).not.toHaveBeenCalled();
   });
 });
 

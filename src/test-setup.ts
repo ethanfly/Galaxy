@@ -11,7 +11,15 @@ globalThis.ResizeObserver = class {
 
 if (!("clipboard" in navigator)) {
   Object.defineProperty(navigator, "clipboard", {
-    value: { writeText: vi.fn(async () => {}) },
+    value: {
+      writeText: vi.fn(async () => {}),
+      readText: vi.fn(async () => ""),
+    },
+    configurable: true,
+  });
+} else if (navigator.clipboard && !("readText" in navigator.clipboard)) {
+  Object.defineProperty(navigator.clipboard, "readText", {
+    value: vi.fn(async () => ""),
     configurable: true,
   });
 }

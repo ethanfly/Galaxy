@@ -68,6 +68,8 @@ const dict: Record<string, { zh: string; en: string }> = {
   enabledState: { zh: "已启用", en: "On" },
   rerun: { zh: "重跑", en: "Rerun" },
   favorite: { zh: "收藏", en: "Favorite" },
+  copy: { zh: "复制", en: "Copy" },
+  paste: { zh: "粘贴", en: "Paste" },
   copyCommand: { zh: "复制命令", en: "Copy command" },
   copyOutput: { zh: "复制输出", en: "Copy output" },
   removeStatusbarComponent: { zh: "移除状态栏组件", en: "Remove status bar component" },

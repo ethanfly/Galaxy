@@ -26,12 +26,35 @@ export async function writeClipboardText(text: string): Promise<void> {
   }
 }
 
+/** Read plain text from the system clipboard. Returns "" on denial or failure. */
+export async function readClipboardText(): Promise<string> {
+  try {
+    if (navigator.clipboard?.readText) {
+      return (await navigator.clipboard.readText()) ?? "";
+    }
+  } catch {
+    /* permission denied or unavailable */
+  }
+  return "";
+}
+
 /** Copy the active xterm selection when present. Returns true if something was copied. */
 export function copyTerminalSelection(term: Terminal): boolean {
   if (!term.hasSelection()) return false;
   const text = term.getSelection();
   if (!text) return false;
   void writeClipboardText(text);
+  return true;
+}
+
+/**
+ * Paste clipboard text into the terminal via xterm's paste path (bracketed paste
+ * when the shell supports it). Returns true when non-empty text was pasted.
+ */
+export async function pasteTerminalClipboard(term: Terminal): Promise<boolean> {
+  const text = await readClipboardText();
+  if (!text) return false;
+  term.paste(text);
   return true;
 }
 
