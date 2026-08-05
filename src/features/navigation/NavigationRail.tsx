@@ -48,7 +48,11 @@ export function NavigationRail() {
   ];
 
   return (
-    <nav className="navigation-rail" aria-label={t("primaryNavigation")}>
+    <nav
+      className="navigation-rail"
+      aria-label={t("primaryNavigation")}
+      onContextMenu={(event) => event.preventDefault()}
+    >
       <div className="rail-actions">
         {actions.map(({ id, label, icon: Icon, active, dialog, onClick }) => (
           <button

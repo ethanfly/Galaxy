@@ -2,8 +2,11 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 import { IconPlus, IconTerminal } from "../../shared/icons/Icons";
 import { t } from "../../shared/i18n";
+import { sessionDisplayTitle, sessionPrimaryAgent } from "../../shared/sessionPresentation";
 import { useAppStore } from "../../shared/stores/appStore";
+import { useTerminalStore } from "../../shared/stores/terminalStore";
 import { useUiStore } from "../../shared/stores/uiStore";
+import { AgentBadge } from "../terminal/AgentBadge";
 
 export function ContextSidebar() {
   const open = useUiStore((state) => state.contextSidebarOpen);
@@ -16,12 +19,17 @@ export function ContextSidebar() {
   const selectSession = useAppStore((state) => state.selectSession);
   const createSession = useAppStore((state) => state.createSession);
   const addProject = useAppStore((state) => state.addProject);
+  const agentStatus = useTerminalStore((state) => state.agentStatus);
 
   if (!open || workspaceView !== "terminal") return null;
   const projectSessions = sessions.filter((session) => session.projectId === currentProjectId);
 
   return (
-    <aside className="context-sidebar" aria-label={t("workspaceContext")}>
+    <aside
+      className="context-sidebar"
+      aria-label={t("workspaceContext")}
+      onContextMenu={(event) => event.preventDefault()}
+    >
       <header className="context-header">
         <span>{t("projects")}</span>
         <button
@@ -66,17 +74,22 @@ export function ContextSidebar() {
         )}
       </header>
       <div className="context-sessions">
-        {projectSessions.map((session) => (
-          <button
-            type="button"
-            key={session.id}
-            className={`context-row ${session.id === currentSessionId ? "active" : ""}`}
-            onClick={() => selectSession(session.id)}
-          >
-            <IconTerminal size={13} />
-            <span className="context-row-label">{session.title}</span>
-          </button>
-        ))}
+        {projectSessions.map((session) => {
+          const title = sessionDisplayTitle(session);
+          const agent = sessionPrimaryAgent(session, agentStatus);
+          return (
+            <button
+              type="button"
+              key={session.id}
+              className={`context-row ${session.id === currentSessionId ? "active" : ""}`}
+              title={title}
+              onClick={() => selectSession(session.id)}
+            >
+              {agent ? <AgentBadge kind={agent} /> : <IconTerminal size={13} />}
+              <span className="context-row-label">{title}</span>
+            </button>
+          );
+        })}
       </div>
     </aside>
   );

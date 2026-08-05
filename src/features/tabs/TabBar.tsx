@@ -1,11 +1,12 @@
 // Global tab strip (spec §5.1): cross-project tabs, rename / close /
 // close-others / drag reorder / horizontal scroll / Ctrl+W.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { IconAlert, IconClose, IconPlay, IconPlus } from "../../shared/icons/Icons";
 import { AgentBadge } from "../terminal/AgentBadge";
 import { t } from "../../shared/i18n";
 import type { AgentStatus, Session } from "../../shared/ipc/types";
+import { sessionDisplayTitle, sessionPrimaryAgent } from "../../shared/sessionPresentation";
 import { useAppStore } from "../../shared/stores/appStore";
 import { useTerminalStore } from "../../shared/stores/terminalStore";
 import { layoutPanes } from "../../shared/utils";
@@ -37,12 +38,6 @@ export function TabBar() {
   const [renameValue, setRenameValue] = useState("");
   const dragId = useRef<string | null>(null);
   const stripRef = useRef<HTMLDivElement>(null);
-
-  const displayTitle = useCallback((s: Session) => {
-    const first = layoutPanes(s.layout)[0];
-    const dyn = first?.title?.trim();
-    return dyn || s.title || t("terminal") + " ?";
-  }, []);
 
   const onDragStart = (id: string) => {
     dragId.current = id;
@@ -87,14 +82,13 @@ export function TabBar() {
       >
         {sessions.map((s) => {
           const panes = layoutPanes(s.layout);
+          const title = sessionDisplayTitle(s);
           const live = panes.some((p) => p.exitCode == null);
           const anyActivity = panes.some(
             (p) => (activity[p.id] ?? 0) > now - ACTIVITY_RECENT_MS && p.exitCode == null,
           );
           const anyMark = panes.some((p) => (marks[p.id] ?? 0) > 0);
-          const agent = panes
-            .map((p) => agentStatus[p.id]?.kind ?? p.agentKind)
-            .find(Boolean);
+          const agent = sessionPrimaryAgent(s, agentStatus);
           const status = pickAgentStatus(panes.map((p) => agentStatus[p.id]?.status));
           const active = s.id === currentSessionId;
           // Status lamp: prefer agent state; fall back to recent PTY activity.
@@ -128,7 +122,7 @@ export function TabBar() {
                 e.preventDefault();
                 setMenu({ session: s, x: e.clientX, y: e.clientY });
               }}
-              title={tabTitle(s.title, lamp, agent)}
+              title={tabTitle(title, lamp, agent)}
             >
               <span
                 className={`tab-status-lamp ${lamp}`}
@@ -161,13 +155,13 @@ export function TabBar() {
                   style={{ width: 100 }}
                 />
               ) : (
-                <span className="tab-title">{displayTitle(s)}</span>
+                <span className="tab-title">{title}</span>
               )}
               <button
                 type="button"
                 className="tab-close"
-                aria-label={`关闭 ${displayTitle(s)}`}
-                title={`关闭 ${displayTitle(s)}`}
+                aria-label={`关闭 ${title}`}
+                title={`关闭 ${title}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   void closeSession(s.id);

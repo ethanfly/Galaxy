@@ -57,4 +57,14 @@ describe("NavigationRail", () => {
     expect(container.querySelector(".rail-brand")).toBeNull();
     expect(screen.getAllByRole("button")).toHaveLength(4);
   });
+
+  it("suppresses the native browser context menu", () => {
+    const { container } = render(<NavigationRail />);
+    const rail = container.querySelector(".navigation-rail");
+    expect(rail).toBeTruthy();
+
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    rail!.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
 });
