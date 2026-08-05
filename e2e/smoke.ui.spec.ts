@@ -340,7 +340,9 @@ test.describe("app shell", () => {
     await mockTauri(page, "en-US", true);
     await page.goto("/");
     await expect(page.locator(".pane-chrome")).toBeVisible();
-    await expect(page.locator(".agent-badge")).toBeVisible();
+    // Agent badges appear on both the tab strip and the left session list.
+    await expect(page.locator(".tab .agent-badge")).toBeVisible();
+    await expect(page.locator(".context-sidebar .agent-badge")).toBeVisible();
     await expect(page.locator(".titlebar-tool-badge")).toBeVisible();
     await page.getByRole("button", { name: "Agent", exact: true }).first().click();
     await expect(page.locator(".right-panel")).toBeVisible();
