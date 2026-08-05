@@ -228,17 +228,6 @@ function GeneralSection({
         </div>
       </div>
       <div className="form-row">
-        <label>全局热键</label>
-        <div className="form-value">
-          <input
-            type="text"
-            placeholder="如 Ctrl+Alt+T（留空禁用）"
-            value={draft.globalHotkey ?? ""}
-            onChange={(e) => update({ globalHotkey: e.target.value || null })}
-          />
-        </div>
-      </div>
-      <div className="form-row">
         <label>资源管理器右键菜单</label>
         <div className="form-value">
           <input

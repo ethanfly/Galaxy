@@ -17,7 +17,7 @@ import { WorkflowRunModal } from "./features/workflow/WorkflowRunModal";
 import { MovePaneModal } from "./features/terminal/MovePaneModal";
 import { InsightsView } from "./features/insights/InsightsView";
 
-import { onAgentStatus, onOpenHere, onPtyExit, onPtyOutput, onRecoveryAvailable, onSessionTitle, onTriggerFire, onNotification, onGitChanged } from "./shared/ipc/events";
+import { onAgentStatus, onOpenHere, onPtyExit, onPtyOutput, onRecoveryAvailable, onSessionTitle, onTriggerFire, onNotification, onGitChanged, onStoreChanged } from "./shared/ipc/events";
 import { useAppStore } from "./shared/stores/appStore";
 import { useTerminalStore } from "./shared/stores/terminalStore";
 import { useUiStore } from "./shared/stores/uiStore";
@@ -46,6 +46,16 @@ export default function App() {
   useEffect(() => {
     void init();
   }, [init]);
+
+  // Suppress the browser's native context menu everywhere. Custom menus call
+  // preventDefault themselves; this covers empty/welcome surfaces that do not.
+  useEffect(() => {
+    const blockNativeMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+    document.addEventListener("contextmenu", blockNativeMenu);
+    return () => document.removeEventListener("contextmenu", blockNativeMenu);
+  }, []);
 
   // Global IPC event wiring (single subscriptions at app root).
   // StrictMode mounts/unmounts once in dev: async listen() must cancel if the
@@ -92,6 +102,12 @@ export default function App() {
       void useAppStore.getState().refreshNotifications();
     }));
     add(onOpenHere(({ path }) => {
+      // Warm single-instance path: app is already ready.
+      // If init is still running, stash for the drain effect.
+      if (useAppStore.getState().loadState !== "ready") {
+        useAppStore.getState().enqueueOpenHere(path);
+        return;
+      }
       void handleOpenHere(path);
     }));
     add(onRecoveryAvailable(() => {
@@ -101,6 +117,12 @@ export default function App() {
       // GitPanel/StatusBar refresh on their own cadence trigger
       window.dispatchEvent(new CustomEvent("galaxy:git-refresh"));
     }));
+    add(onStoreChanged((payload) => {
+      // Background shell re-detect emits { kind: "profiles" } after first paint.
+      if (payload?.kind === "profiles") {
+        void useAppStore.getState().refreshProfiles();
+      }
+    }));
 
     return () => {
       cancelled = true;
@@ -108,7 +130,7 @@ export default function App() {
     };
   }, [ingest]);
 
-  // Drain queued --open-here paths after init.
+  // Drain queued --open-here paths after init (cold start only).
   useEffect(() => {
     if (loadState !== "ready") return;
     const queued = useAppStore.getState().drainOpenHere();
@@ -171,9 +193,24 @@ export default function App() {
   );
 }
 
+/** Dedup consecutive identical Explorer "open here" requests (same path). */
+let lastOpenHere: { path: string; at: number } | null = null;
+
 async function handleOpenHere(path: string) {
+  const normalized = path.trim();
+  if (!normalized) return;
+  const now = Date.now();
+  if (
+    lastOpenHere &&
+    lastOpenHere.path.toLowerCase() === normalized.toLowerCase() &&
+    now - lastOpenHere.at < 2500
+  ) {
+    return;
+  }
+  lastOpenHere = { path: normalized, at: now };
+
   const app = useAppStore.getState();
-  const project = await app.addProject(path);
+  const project = await app.addProject(normalized);
   if (project) await app.createSession(project.id);
 }
 

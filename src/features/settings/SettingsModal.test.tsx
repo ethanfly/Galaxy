@@ -64,6 +64,31 @@ describe("settings chapter navigation", () => {
     expect(screen.getByRole("button", { name: "Workflows" }).getAttribute("aria-current")).toBeNull();
   });
 
+  it("places global hotkey capture under the shortcuts chapter, not general", async () => {
+    render(<SettingsModal />);
+
+    expect(screen.queryByText("全局热键")).toBeNull();
+
+    fireEvent.click(await screen.findByRole("button", { name: "快捷键" }));
+
+    expect(await screen.findByText("全局热键")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "（禁用 · 点击设置）" })).toBeTruthy();
+  });
+
+  it("records a global hotkey via click-then-keydown", async () => {
+    render(<SettingsModal />);
+    fireEvent.click(await screen.findByRole("button", { name: "快捷键" }));
+    fireEvent.click(await screen.findByRole("button", { name: "（禁用 · 点击设置）" }));
+
+    expect(screen.getByRole("button", { name: "按下新快捷键…" })).toBeTruthy();
+
+    fireEvent.keyDown(window, { key: "t", ctrlKey: true, altKey: true });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Ctrl+Alt+T" })).toBeTruthy();
+    });
+  });
+
   it("names compact add and remove controls by their operation", async () => {
     useAppStore.setState({
       config: { ...config, statusbarComponents: ["cwd"] },

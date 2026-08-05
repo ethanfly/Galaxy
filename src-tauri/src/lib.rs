@@ -46,7 +46,9 @@ pub fn run() {
             let args = platform::args::parse(argv);
             if let Some(path) = args.open_here {
                 if let Some(state) = app.try_state::<Arc<AppState>>() {
-                    state.queue_open_here(&path);
+                    // Warm path: UI is already listening — emit only.
+                    // Do not also queue: that would double-create a session if
+                    // anything later drained pending_open_here again.
                     state.emit_open_here(&path);
                 }
             }
@@ -67,19 +69,15 @@ pub fn run() {
         })?;
         app.manage(built.state.clone());
 
-        // Queue the first --open-here (Explorer right-click cold start).
+        // Cold start --open-here: queue only. The UI drains via
+        // system_pending_open_here after init. Emitting as well would create
+        // a second terminal tab for the same Explorer right-click.
         if let Some(path) = &initial_args.open_here {
             built.state.queue_open_here(path);
-            let st = built.state.clone();
-            let path = path.clone();
-            tauri::async_runtime::spawn(async move {
-                // Give the UI a moment to subscribe before emitting.
-                std::thread::sleep(std::time::Duration::from_millis(600));
-                st.emit_open_here(&path);
-            });
         }
 
-        // Register configured global hotkey.
+        // Register configured global hotkey (cheap; keep before show so the
+        // hotkey works as soon as the window appears).
         let hotkey = built.state.store.read().config.global_hotkey.clone();
         if let Err(e) = apply_global_hotkey(&handle, &hotkey) {
             tracing::warn!("全局热键注册失败: {}", e.message);
@@ -118,7 +116,12 @@ pub fn run() {
             }
         });
 
+        // First interactive paint: show before PATH-walk shell re-detect.
         let _ = window.show();
+
+        // Deferred: full shell profile detection (pwsh / git-bash / wsl + PATH).
+        state::refresh_profiles_in_background(built.state.clone());
+
         Ok(())
     });
 

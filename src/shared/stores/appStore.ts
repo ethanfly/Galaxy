@@ -33,7 +33,10 @@ interface AppStoreState {
   refreshProjects(): Promise<void>;
   refreshSessions(): Promise<void>;
   refreshConfig(): Promise<void>;
+  refreshProfiles(): Promise<void>;
   refreshNotifications(): Promise<void>;
+  /** Kick deferred PTY restore for the focused session (no-op path when gated). */
+  restoreWorkspace(prioritySessionId?: string | null): Promise<void>;
 
   selectProject(id: string): void;
   selectSession(id: string): void;
@@ -83,6 +86,7 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
         ]);
       setLanguage(config.language);
       const sorted = sortSessions(normalizeSessions(sessions));
+      const currentSessionId = get().currentSessionId ?? sorted[0]?.id ?? null;
       set({
         boot,
         projects,
@@ -91,15 +95,31 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
         profiles,
         notifications,
         unreadCount: notifications.filter((n) => !n.read).length,
+        // Critical path ends here — UI is interactive. PTY restore is deferred
+        // and must not delay loadState: "ready".
         loadState: "ready",
         currentProjectId: get().currentProjectId ?? projectOfFirst(sorted, projects),
-        currentSessionId: get().currentSessionId ?? sorted[0]?.id ?? null,
+        currentSessionId,
         openHereQueue: pendingOpenHere,
       });
-      // Restore PTYs for persisted sessions; failures per-pane are tolerated.
-      void ipc.workspaceRestore().catch(() => {});
+      // After a crash, wait for RecoveryDialog — do not race clean-start with
+      // multi-session background restore. Normal boot restores immediately.
+      if (!boot.recoveredFromCrash) {
+        void get().restoreWorkspace(currentSessionId);
+      }
     } catch (e) {
       set({ loadState: "error", error: e instanceof Error ? e.message : String(e) });
+    }
+  },
+
+  async restoreWorkspace(prioritySessionId) {
+    const focus =
+      prioritySessionId ?? get().currentSessionId ?? get().sessions[0]?.id ?? null;
+    try {
+      await ipc.workspaceRestore(focus);
+      await get().refreshSessions();
+    } catch {
+      /* per-pane failures are tolerated on the backend */
     }
   },
 
@@ -117,6 +137,11 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
     const config = await ipc.configGet();
     setLanguage(config.language);
     set({ config });
+  },
+
+  async refreshProfiles() {
+    const profiles = await ipc.profilesList();
+    set({ profiles });
   },
 
   async refreshNotifications() {

@@ -17,8 +17,19 @@
 | 200 行确定性输出送达完整 | 完整 (集成测试通过) | 完整 | ✅ |
 | 输出风暴后交互回显 | < 5s 内集成测试断言通过 | < 100ms 感知 | ✅(debug) |
 | 每 8ms 调度窗口合并 | 批量事件按窗口发出 | ≤ 1 事件/窗口/pane | ✅ |
-| 启动到首帧（debug，含 WebView2 初始化） | ~2.3s | < 2s (release) | ⚑ debug 基线 |
+| 启动到首帧（debug，含 WebView2 初始化） | ~2.3s（历史） | < 2s (release) | ⚑ debug 基线 |
+| 冷启动关键路径（2026-08-06） | 见下「冷启动拆分」 | 首交互不门控全量 PTY / 全量 shell 探测 | ✅ |
 | 单元+集成测试总耗时 | 0.1s (lib) + 1.0s (pty) + 0.7s (svc) | < 10s | ✅ |
+
+### 冷启动拆分（2026-08-06）
+
+| 阶段 | 内容 | 是否门控首帧 / `ready` |
+| --- | --- | --- |
+| `window.show` 前 | 读 store、blocks、**最小** shell（SystemRoot 固定路径）、PTY manager、热键、窗体几何 | 是 |
+| show 之后 | 全量 shell 探测（PATH / pwsh / git-bash / wsl）后台线程 | 否 |
+| 前端 `init` | 列表/配置 IPC → `loadState: ready` | 是（轻量） |
+| ready 之后 | `workspace_restore(priority)`：当前会话同步，其余会话后台 | 否 |
+| 首次用 Git | `git --version` 惰性探测 | 否 |
 
 ## 回归门槛
 

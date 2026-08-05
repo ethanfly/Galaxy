@@ -10,6 +10,7 @@ const eventMocks = vi.hoisted(() => ({
   onPtyOutput: vi.fn(),
   onRecoveryAvailable: vi.fn(),
   onSessionTitle: vi.fn(),
+  onStoreChanged: vi.fn(),
   onTriggerFire: vi.fn(),
 }));
 
@@ -177,5 +178,35 @@ describe("App global event listener lifecycle", () => {
     useAppStore.setState({ config: null });
     render(<App />);
     expect(document.documentElement.style.getPropertyValue("--ui-font-size")).toBe("13px");
+  });
+
+  it("blocks the browser native context menu globally", () => {
+    render(<App />);
+    const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    const prevented = !document.dispatchEvent(event);
+    expect(prevented || event.defaultPrevented).toBe(true);
+  });
+
+  it("refreshes profiles when store://changed reports kind=profiles", async () => {
+    let storeCb: ((p: { kind?: string }) => void) | null = null;
+    eventMocks.onStoreChanged.mockImplementation((cb: (p: { kind?: string }) => void) => {
+      storeCb = cb;
+      return Promise.resolve(vi.fn());
+    });
+    const refreshProfiles = vi.fn(async () => {});
+    useAppStore.setState({ refreshProfiles });
+
+    render(<App />);
+    await waitFor(() => expect(storeCb).not.toBeNull());
+
+    act(() => {
+      storeCb?.({ kind: "profiles" });
+    });
+    await waitFor(() => expect(refreshProfiles).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      storeCb?.({ kind: "other" });
+    });
+    expect(refreshProfiles).toHaveBeenCalledTimes(1);
   });
 });

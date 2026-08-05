@@ -92,3 +92,7 @@ export function onOpenHere(cb: (p: { path: string }) => void) {
 export function onRecoveryAvailable(cb: () => void) {
   return listen(EV.RECOVERY, () => cb());
 }
+
+export function onStoreChanged(cb: (p: { kind?: string }) => void) {
+  return listen<{ kind?: string }>(EV.STORE_CHANGED, (e) => cb(e.payload ?? {}));
+}

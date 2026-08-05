@@ -18,6 +18,7 @@ describe("IPC event contract", () => {
       GIT_CHANGED: "git://changed",
       OPEN_HERE: "system://open-here",
       RECOVERY: "system://recovery",
+      STORE_CHANGED: "store://changed",
     });
   });
 });

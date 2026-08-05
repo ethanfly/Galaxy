@@ -81,7 +81,11 @@ export const templateSave = (sessionId: string, name: string) =>
 export const templateApply = (sessionId: string, templateId: string) =>
   call<Session>("template_apply", { sessionId, templateId });
 export const templateDelete = (id: string) => call<void>("template_delete", { id });
-export const workspaceRestore = () => call<number>("workspace_restore");
+/** Restore PTYs; pass the focused session id so that tab becomes interactive first. */
+export const workspaceRestore = (prioritySessionId?: string | null) =>
+  call<number>("workspace_restore", {
+    prioritySessionId: prioritySessionId ?? null,
+  });
 export const recoveryCleanStart = () => call<void>("recovery_clean_start");
 
 // ------------------------------------------------------------------ pty

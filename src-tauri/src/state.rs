@@ -2,7 +2,7 @@
 //! for persisted state; AppState also translates PTY pipeline events into
 //! Tauri events, persistence and notifications via `PtyEventSink`.
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use parking_lot::RwLock;
@@ -61,6 +61,15 @@ pub struct AppState {
     pub last_debounced_persist: parking_lot::Mutex<std::time::Instant>,
     pub recovered_from_crash: AtomicBool,
     pub read_only: AtomicBool,
+    /// Generation token for deferred multi-session PTY restore. Bumped to
+    /// cancel any in-flight background restore (e.g. crash clean-start).
+    pub restore_generation: AtomicU64,
+}
+
+/// Whether a deferred restore task should keep spawning panes.
+/// Pure helper so unit tests can lock the cancel contract without a PTY.
+pub fn restore_task_active(active_generation: u64, task_generation: u64) -> bool {
+    active_generation == task_generation
 }
 
 impl AppState {
@@ -70,6 +79,20 @@ impl AppState {
 
     pub fn data_paths(&self) -> &DataPaths {
         self.persistence.paths()
+    }
+
+    /// Start a new restore wave and invalidate any previous deferred restore.
+    pub fn begin_restore_generation(&self) -> u64 {
+        self.restore_generation.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// Cancel deferred restore without starting a new one (clean-start path).
+    pub fn cancel_deferred_restore(&self) {
+        self.restore_generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub fn restore_generation(&self) -> u64 {
+        self.restore_generation.load(Ordering::SeqCst)
     }
 
     /// Persist store.json. Failure flips the app into read-only warning mode
@@ -445,15 +468,17 @@ pub fn build_state(app: AppHandle) -> Result<BuiltState, AppError> {
         ))
     })?;
 
+    // Git availability is probed lazily on first use (not here).
     let git = GitService::new();
     let agents = AgentRegistry::new();
 
-    let mut profiles = crate::services::shell_detect::detect_profiles();
-    for cp in &store.config.custom_profiles {
-        if profiles.iter().all(|p| p.id != cp.id) {
-            profiles.push(cp.clone());
-        }
-    }
+    // Critical path: fixed-path shells only. Full PATH walk + optional
+    // shells (pwsh / git-bash / wsl) run after the window is shown via
+    // `refresh_profiles_in_background`.
+    let profiles = crate::services::shell_detect::merge_custom_profiles(
+        crate::services::shell_detect::minimal_boot_profiles(),
+        &store.config.custom_profiles,
+    );
 
     let state = Arc::new(AppState {
         app: app.clone(),
@@ -470,6 +495,7 @@ pub fn build_state(app: AppHandle) -> Result<BuiltState, AppError> {
         last_debounced_persist: parking_lot::Mutex::new(std::time::Instant::now()),
         recovered_from_crash: AtomicBool::new(had_crash),
         read_only: AtomicBool::new(false),
+        restore_generation: AtomicU64::new(0),
     });
 
     let sink: Arc<dyn PtyEventSink> = Arc::new(Sink {
@@ -486,6 +512,23 @@ pub fn build_state(app: AppHandle) -> Result<BuiltState, AppError> {
     }
 
     Ok(BuiltState { state, had_crash })
+}
+
+/// Background shell re-detect after first paint. Safe to call once from setup.
+pub fn refresh_profiles_in_background(state: Arc<AppState>) {
+    std::thread::Builder::new()
+        .name("shell-detect".into())
+        .spawn(move || {
+            let detected = crate::services::shell_detect::detect_profiles();
+            let custom = state.store.read().config.custom_profiles.clone();
+            let merged = crate::services::shell_detect::merge_custom_profiles(detected, &custom);
+            *state.profiles.write() = merged;
+            let _ = state
+                .app
+                .emit(events::STORE_CHANGED, serde_json::json!({ "kind": "profiles" }));
+            tracing::info!("后台 Shell 探测完成");
+        })
+        .ok();
 }
 
 pub fn shutdown(state: &AppState) {
@@ -513,6 +556,18 @@ pub fn validate_external_url(url: &str) -> Result<(), AppError> {
         Ok(())
     } else {
         Err(AppError::InvalidInput(format!("不允许的链接协议: {url}")))
+    }
+}
+
+#[cfg(test)]
+mod restore_generation_tests {
+    use super::*;
+
+    #[test]
+    fn deferred_restore_stops_when_generation_bumps() {
+        assert!(restore_task_active(3, 3));
+        assert!(!restore_task_active(4, 3));
+        assert!(!restore_task_active(0, 1));
     }
 }
 

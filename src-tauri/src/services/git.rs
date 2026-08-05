@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use parking_lot::Mutex;
@@ -13,7 +13,8 @@ use crate::core::models::{GitBranch, GitFileChange, GitStatus};
 use crate::error::AppError;
 
 pub struct GitService {
-    git_available: bool,
+    /// Lazily probed on first use so cold start does not spawn `git --version`.
+    git_available: OnceLock<bool>,
     cache: Mutex<std::collections::HashMap<String, Arc<Mutex<GitStatus>>>>,
     watchers: Mutex<std::collections::HashMap<String, notify::RecommendedWatcher>>,
 }
@@ -45,28 +46,34 @@ impl Default for GitService {
     }
 }
 
+fn probe_git_available() -> bool {
+    let mut cmd = Command::new("git");
+    cmd.arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    cmd.status().map(|s| s.success()).unwrap_or(false)
+}
+
 impl GitService {
     pub fn new() -> Self {
-        let git_available = Command::new("git")
-            .arg("--version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
         Self {
-            git_available,
+            git_available: OnceLock::new(),
             cache: Mutex::new(std::collections::HashMap::new()),
             watchers: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
     pub fn is_available(&self) -> bool {
-        self.git_available
+        *self.git_available.get_or_init(probe_git_available)
     }
 
     pub fn is_repo(&self, path: &Path) -> bool {
-        if !self.git_available {
+        if !self.is_available() {
             return false;
         }
         run_git(path, &["rev-parse", "--is-inside-work-tree"])
@@ -76,8 +83,8 @@ impl GitService {
 
     /// Fresh status read (also updates the per-project cache).
     pub fn status(&self, path: &Path) -> GitStatus {
-        let mut status = GitStatus { git_available: self.git_available, ..Default::default() };
-        if !self.git_available || !self.is_repo(path) {
+        let mut status = GitStatus { git_available: self.is_available(), ..Default::default() };
+        if !self.is_available() || !self.is_repo(path) {
             return status;
         }
         status.is_repo = true;

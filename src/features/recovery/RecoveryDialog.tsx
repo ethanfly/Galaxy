@@ -1,7 +1,7 @@
 // Crash recovery choice: restore last workspace or clean start (§8).
 import { useState } from "react";
 
-import { recoveryCleanStart, workspaceRestore } from "../../shared/ipc/client";
+import { recoveryCleanStart } from "../../shared/ipc/client";
 import { useUiStore } from "../../shared/stores/uiStore";
 import { useAppStore } from "../../shared/stores/appStore";
 import { Modal } from "../../shared/components/Modal";
@@ -19,9 +19,11 @@ export function RecoveryDialog() {
     setBusy(true);
     try {
       if (restore) {
-        await workspaceRestore();
-        await useAppStore.getState().refreshSessions();
+        // User opted to keep workspace — start (or re-start) priority restore.
+        // init intentionally skipped restore when recoveredFromCrash.
+        await useAppStore.getState().restoreWorkspace();
       } else {
+        // Cancels any deferred restore generation on the backend first.
         await recoveryCleanStart();
         await useAppStore.getState().refreshSessions();
       }

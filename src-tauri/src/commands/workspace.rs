@@ -1,5 +1,6 @@
 //! Projects, sessions, tabs, split layout and templates (spec §5.1, §5.2).
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use tauri::State;
@@ -802,38 +803,137 @@ pub async fn template_delete(state: State<'_, Arc<AppState>>, id: String) -> Cmd
 
 // ---------------------------------------------------------------- restore
 
-/// Rebuild PTYs for all persisted sessions after app start (§5.1).
-#[tauri::command]
-pub async fn workspace_restore(state: State<'_, Arc<AppState>>) -> CmdResult<usize> {
-    let sessions: Vec<Session> = state.store.read().sessions.clone();
-    let mut restored = 0usize;
-    for session in sessions {
-        // Skip sessions already live (e.g. hot reload).
-        if session
-            .layout
-            .panes()
-            .iter()
-            .all(|p| state.pty().is_alive(&p.id))
-            && !session.layout.panes().is_empty()
-        {
-            continue;
-        }
-        let mut any_ok = false;
-        for pane in session.layout.panes() {
-            if state.pty().is_alive(&pane.id) {
-                any_ok = true;
-                continue;
-            }
-            let before = pane.clone();
-            spawn_pane_process(&state, &session.project_id, &session.id, pane);
-            let _ = &before; // failure already recorded on the pane
-            any_ok = any_ok || state.pty().is_alive(&pane.id);
-        }
-        if any_ok {
-            restored += 1;
+/// Order sessions so the focused / first-visible session restores before the rest.
+/// Pure helper — unit-tested without spawning PTYs.
+pub fn order_sessions_for_restore<'a>(
+    sessions: &'a [Session],
+    priority_session_id: Option<&str>,
+) -> Vec<&'a Session> {
+    let mut ordered: Vec<&Session> = Vec::with_capacity(sessions.len());
+    if let Some(id) = priority_session_id {
+        if let Some(s) = sessions.iter().find(|s| s.id == id) {
+            ordered.push(s);
         }
     }
-    state.persist().cmd()?;
+    for s in sessions {
+        if priority_session_id.is_some_and(|id| id == s.id) {
+            continue;
+        }
+        ordered.push(s);
+    }
+    ordered
+}
+
+/// Restore panes for one session. When `task_generation` is set, aborts (and
+/// unregisters any pane just spawned in this call) if a newer restore wave
+/// or clean-start has cancelled deferred work.
+fn restore_session_panes_with_generation(
+    state: &AppState,
+    session: &Session,
+    task_generation: Option<u64>,
+) -> bool {
+    let still_active = |s: &AppState| match task_generation {
+        Some(gen) => crate::state::restore_task_active(s.restore_generation(), gen),
+        None => true,
+    };
+
+    if !still_active(state) {
+        return false;
+    }
+    if session.layout.panes().is_empty() {
+        return false;
+    }
+    // Skip sessions already live (e.g. hot reload).
+    if session
+        .layout
+        .panes()
+        .iter()
+        .all(|p| state.pty().is_alive(&p.id))
+    {
+        return true;
+    }
+    let mut any_ok = false;
+    for pane in session.layout.panes() {
+        if !still_active(state) {
+            return any_ok;
+        }
+        if state.pty().is_alive(&pane.id) {
+            any_ok = true;
+            continue;
+        }
+        spawn_pane_process(state, &session.project_id, &session.id, pane);
+        if !still_active(state) {
+            // Cancel landed mid-spawn: tear down the orphan we just created.
+            state.pty().unregister(&pane.id);
+            return any_ok;
+        }
+        any_ok = any_ok || state.pty().is_alive(&pane.id);
+    }
+    any_ok
+}
+
+/// Rebuild PTYs after app start (§5.1).
+///
+/// Restores the priority session (current UI tab) synchronously so the user
+/// gets an interactive terminal quickly; remaining sessions spawn on a
+/// background task and never gate first paint / `loadState: ready`.
+/// Background work is generation-scoped and cancelled by
+/// [`recovery_clean_start`] or a newer restore call.
+#[tauri::command]
+pub async fn workspace_restore(
+    state: State<'_, Arc<AppState>>,
+    priority_session_id: Option<String>,
+) -> CmdResult<usize> {
+    let task_gen = state.begin_restore_generation();
+    let sessions: Vec<Session> = state.store.read().sessions.clone();
+    let ordered = order_sessions_for_restore(&sessions, priority_session_id.as_deref());
+
+    let mut restored = 0usize;
+    let mut rest: Vec<Session> = Vec::new();
+
+    for (i, session) in ordered.into_iter().enumerate() {
+        if i == 0 {
+            if restore_session_panes_with_generation(&state, session, Some(task_gen)) {
+                restored += 1;
+            }
+        } else {
+            rest.push(session.clone());
+        }
+    }
+
+    // Persist after the priority session so pane exit markers land on disk.
+    let _ = state.persist();
+
+    if !rest.is_empty() {
+        let state_bg = state.inner().clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut n = 0usize;
+            for session in rest {
+                if !crate::state::restore_task_active(state_bg.restore_generation(), task_gen) {
+                    tracing::info!("后台会话恢复已取消 (generation={task_gen})");
+                    return;
+                }
+                // Skip sessions removed by clean-start or other store edits.
+                let still_present = state_bg
+                    .store
+                    .read()
+                    .sessions
+                    .iter()
+                    .any(|s| s.id == session.id);
+                if !still_present {
+                    continue;
+                }
+                if restore_session_panes_with_generation(&state_bg, &session, Some(task_gen)) {
+                    n += 1;
+                }
+            }
+            if crate::state::restore_task_active(state_bg.restore_generation(), task_gen) {
+                let _ = state_bg.persist();
+                tracing::info!("后台恢复其余会话完成: {n}");
+            }
+        });
+    }
+
     Ok(restored)
 }
 
@@ -841,6 +941,9 @@ pub async fn workspace_restore(state: State<'_, Arc<AppState>>) -> CmdResult<usi
 /// recovery file is preserved (§8).
 #[tauri::command]
 pub async fn recovery_clean_start(state: State<'_, Arc<AppState>>) -> CmdResult<()> {
+    // Invalidate any deferred multi-session restore before tearing down PTYs.
+    state.cancel_deferred_restore();
+
     // Preserve the pre-clean store alongside the backups.
     let paths = state.data_paths().clone();
     if paths.store.exists() {
@@ -863,6 +966,7 @@ pub async fn recovery_clean_start(state: State<'_, Arc<AppState>>) -> CmdResult<
         state.pty().unregister(&id);
     }
     state.store.write().sessions.clear();
+    state.recovered_from_crash.store(false, Ordering::SeqCst);
     state.persist().cmd()?;
     Ok(())
 }
@@ -990,5 +1094,52 @@ mod tests {
             .find(|session| session.id == "session-2")
             .expect("the target session must remain");
         assert!(target.layout.contains_pane("pane-1"));
+    }
+
+    fn stub_session(id: &str, sort: i64) -> Session {
+        Session {
+            id: id.into(),
+            project_id: "p".into(),
+            title: id.into(),
+            sort_order: sort,
+            agent_kind: None,
+            layout: LayoutNode::new_pane(pane(&format!("{id}-pane"))),
+            sync_input: false,
+            created_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn restore_order_puts_priority_session_first() {
+        let sessions = vec![
+            stub_session("a", 0),
+            stub_session("b", 1),
+            stub_session("c", 2),
+        ];
+        let ordered = order_sessions_for_restore(&sessions, Some("c"));
+        assert_eq!(
+            ordered.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            vec!["c", "a", "b"]
+        );
+    }
+
+    #[test]
+    fn restore_order_without_priority_keeps_store_order() {
+        let sessions = vec![stub_session("a", 0), stub_session("b", 1)];
+        let ordered = order_sessions_for_restore(&sessions, None);
+        assert_eq!(
+            ordered.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
+    }
+
+    #[test]
+    fn restore_order_ignores_unknown_priority_id() {
+        let sessions = vec![stub_session("a", 0), stub_session("b", 1)];
+        let ordered = order_sessions_for_restore(&sessions, Some("missing"));
+        assert_eq!(
+            ordered.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
     }
 }
