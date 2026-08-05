@@ -116,7 +116,7 @@ impl AgentAdapter for ClaudeAdapter {
                     .find_map(|v| message_text(v))
                     .map(|t| t.chars().take(160).collect())
                     .unwrap_or_else(|| "Claude Code 会话".into());
-                let status = crate::pty::tracker::infer_agent_status(
+                let status = crate::pty::tracker::infer_historical_agent_status(
                     AgentKind::ClaudeCode,
                     &lines
                         .iter()

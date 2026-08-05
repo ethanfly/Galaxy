@@ -1,3 +1,4 @@
+pub mod agent_status;
 pub mod backend;
 pub mod decode;
 pub mod portable;

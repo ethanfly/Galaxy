@@ -492,8 +492,10 @@ pub fn simplify_title(raw: &str) -> String {
     }
 }
 
-/// Heuristic agent status inference from the stripped output tail (§5.4).
-pub fn infer_agent_status(kind: AgentKind, stripped_tail: &str) -> AgentStatus {
+/// Heuristic status inference for persisted conversation history (spec section 5.4).
+///
+/// Live PTY state must use rendered-screen observations from `pty::agent_status`.
+pub fn infer_historical_agent_status(kind: AgentKind, stripped_tail: &str) -> AgentStatus {
     let tail = stripped_tail
         .lines()
         .rev()
@@ -548,6 +550,12 @@ pub fn infer_agent_status(kind: AgentKind, stripped_tail: &str) -> AgentStatus {
     }
 
     AgentStatus::Idle
+}
+
+/// Temporary compatibility for the live manager while rendered observations are wired in.
+#[doc(hidden)]
+pub fn infer_agent_status(kind: AgentKind, stripped_tail: &str) -> AgentStatus {
+    infer_historical_agent_status(kind, stripped_tail)
 }
 
 /// Build a CommandBlock from tracker output parts.
@@ -659,14 +667,23 @@ mod tests {
     #[test]
     fn status_inference_blocked_and_working() {
         assert_eq!(
-            infer_agent_status(AgentKind::ClaudeCode, "❯ Do you want to proceed?\n  1. Yes"),
+            infer_historical_agent_status(
+                AgentKind::ClaudeCode,
+                "❯ Do you want to proceed?\n  1. Yes",
+            ),
             AgentStatus::Blocked
         );
         assert_eq!(
-            infer_agent_status(AgentKind::ClaudeCode, "⠋ Thinking… (esc to interrupt)"),
+            infer_historical_agent_status(
+                AgentKind::ClaudeCode,
+                "⠋ Thinking… (esc to interrupt)",
+            ),
             AgentStatus::Working
         );
-        assert_eq!(infer_agent_status(AgentKind::Codex, "❯"), AgentStatus::Idle);
+        assert_eq!(
+            infer_historical_agent_status(AgentKind::Codex, "❯"),
+            AgentStatus::Idle
+        );
     }
 
     #[test]
