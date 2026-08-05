@@ -41,6 +41,12 @@ async function mockTauri(page: Page) {
       },
       notifications: [],
     };
+    const persistedConfig = localStorage.getItem("galaxy-e2e-config");
+    if (persistedConfig) {
+      Object.assign(store.config, JSON.parse(persistedConfig));
+    }
+    const invokes: Array<{ command: string; args?: Record<string, unknown> }> = [];
+    (window as unknown as { __tauriInvokes: typeof invokes }).__tauriInvokes = invokes;
     const noop = () => Promise.resolve(undefined);
     const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
       boot_info: () => ({ recoveredFromCrash: false, readOnly: false, dataDir: "D" }),
@@ -53,12 +59,14 @@ async function mockTauri(page: Page) {
       workspace_restore: () => 0,
       config_update: (args) => {
         store.config = args?.config as typeof store.config;
+        localStorage.setItem("galaxy-e2e-config", JSON.stringify(store.config));
         return store.config;
       },
       window_save_state: noop,
     };
     (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
       invoke: (cmd: string, args?: Record<string, unknown>) => {
+        invokes.push({ command: cmd, args });
         const fn = responses[cmd];
         return Promise.resolve(fn ? fn(args) : undefined);
       },
@@ -79,6 +87,39 @@ async function mockTauri(page: Page) {
     };
     void listeners;
   });
+}
+
+async function expectAppearanceFits(page: Page) {
+  const layout = await page.evaluate(() => {
+    const selectors = [
+      ".titlebar .app-name",
+      ".settings-nav button",
+      ".settings-footer button",
+      ".form-row label",
+      ".statusbar .status-item",
+      ".tabbar button",
+      ".context-sidebar button",
+    ].join(",");
+    const clipped = Array.from(document.querySelectorAll<HTMLElement>(selectors))
+      .filter((element) => element.offsetParent !== null && element.textContent?.trim())
+      .filter(
+        (element) =>
+          element.scrollWidth > element.clientWidth + 1 ||
+          element.scrollHeight > element.clientHeight + 1,
+      )
+      .map(
+        (element) =>
+          `${element.tagName}.${element.className}: ${element.textContent?.trim()} ` +
+          `(client ${element.clientWidth}x${element.clientHeight}, scroll ${element.scrollWidth}x${element.scrollHeight})`,
+      );
+    return {
+      horizontalOverflow:
+        document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      clipped,
+    };
+  });
+  expect(layout.horizontalOverflow).toBeLessThanOrEqual(1);
+  expect(layout.clipped).toEqual([]);
 }
 
 test.describe("app shell", () => {
@@ -169,5 +210,54 @@ test.describe("app shell", () => {
     await page.locator(".titlebar-settings").click();
     const restored = await Promise.all(samples.map(fontSize));
     expect(restored).toEqual(before);
+  });
+
+  test("persists font settings and keeps the maximum UI size within desktop and narrow viewports", async ({
+    page,
+  }) => {
+    await mockTauri(page);
+    await page.goto("/");
+    await page.locator(".titlebar-settings").click();
+    let dialog = page.getByRole("dialog");
+    const fontInputs = dialog.getByRole("spinbutton");
+    await fontInputs.nth(0).fill("24");
+    await fontInputs.nth(1).fill("24");
+    await expect(page.locator(":root")).toHaveCSS("font-size", "24px");
+    await expectAppearanceFits(page);
+    await page.screenshot({ path: "test-results/appearance-preview-desktop.png", fullPage: true });
+
+    await dialog.getByRole("button", { name: "取消" }).click();
+    await expect(page.locator(":root")).toHaveCSS("font-size", "13px");
+    await expectAppearanceFits(page);
+    await page.screenshot({ path: "test-results/appearance-cancel-desktop.png", fullPage: true });
+
+    await page.setViewportSize({ width: 560, height: 720 });
+    await page.locator(".titlebar-settings").click();
+    dialog = page.getByRole("dialog");
+    await dialog.getByRole("spinbutton").nth(0).fill("24");
+    await dialog.getByRole("spinbutton").nth(1).fill("24");
+    await expect(page.locator(":root")).toHaveCSS("font-size", "24px");
+    await expectAppearanceFits(page);
+    await page.screenshot({ path: "test-results/appearance-preview-narrow.png", fullPage: true });
+
+    await dialog.getByRole("button", { name: "取消" }).click();
+    await expect(page.locator(":root")).toHaveCSS("font-size", "13px");
+    await expectAppearanceFits(page);
+    await page.screenshot({ path: "test-results/appearance-cancel-narrow.png", fullPage: true });
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator(".titlebar-settings").click();
+    dialog = page.getByRole("dialog");
+    await dialog.getByRole("spinbutton").nth(0).fill("22");
+    await dialog.getByRole("spinbutton").nth(1).fill("18");
+    await dialog.getByRole("button", { name: "保存" }).click();
+    await expect(dialog).toBeHidden();
+
+    await page.reload();
+    await expect(page.locator(":root")).toHaveCSS("font-size", "18px");
+    await page.locator(".titlebar-settings").click();
+    dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("spinbutton").nth(0)).toHaveValue("22");
+    await expect(dialog.getByRole("spinbutton").nth(1)).toHaveValue("18");
   });
 });

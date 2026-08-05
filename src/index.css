@@ -882,7 +882,8 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
   align-items: center;
   gap: 4px;
   padding: 0 8px;
-  height: 18px;
+  height: clamp(18px, 1.2em, 24px);
+  line-height: 1;
   border-radius: 2px;
   white-space: nowrap;
 }

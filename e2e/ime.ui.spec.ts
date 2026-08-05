@@ -52,7 +52,7 @@ async function mockTerminalSession(page: Page, includeHiddenSession = false) {
       },
       createdAt: "2026-08-03T00:00:01Z",
     };
-    const config = {
+    let config = {
       schemaVersion: 3,
       language: "zh-CN",
       terminalFontSize: 14,
@@ -83,7 +83,18 @@ async function mockTerminalSession(page: Page, includeHiddenSession = false) {
       hardwareAcceleration: true,
       defaultProfileId: null,
     };
-    const responses: Record<string, () => unknown> = {
+    const persistedConfig = localStorage.getItem("galaxy-ime-e2e-config");
+    if (persistedConfig) {
+      config = { ...config, ...JSON.parse(persistedConfig) };
+    }
+    type InvokeArgs = Record<string, unknown> & {
+      event?: string;
+      handler?: number;
+      eventId?: number;
+    };
+    const invokes: Array<{ command: string; args?: InvokeArgs }> = [];
+    (window as unknown as { __tauriInvokes: typeof invokes }).__tauriInvokes = invokes;
+    const responses: Record<string, (args?: InvokeArgs) => unknown> = {
       boot_info: () => ({ recoveredFromCrash: false, readOnly: false, dataDir: "D" }),
       project_list: () => [project],
       session_list: () => (withHiddenSession ? [session, hiddenSession] : [session]),
@@ -92,8 +103,14 @@ async function mockTerminalSession(page: Page, includeHiddenSession = false) {
       notification_list: () => [],
       system_pending_open_here: () => [],
       workspace_restore: () => 0,
+      config_update: (args) => {
+        config = args?.config as typeof config;
+        localStorage.setItem("galaxy-ime-e2e-config", JSON.stringify(config));
+        return config;
+      },
       pty_resize: () => undefined,
       pty_write: () => undefined,
+      pty_observe_screen: () => undefined,
       pane_split: () => ({
         ...session,
         layout: {
@@ -120,7 +137,8 @@ async function mockTerminalSession(page: Page, includeHiddenSession = false) {
     const eventListeners = new Map<string, number[]>();
     let nextCallbackId = 1;
     (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
-      invoke: (cmd: string, args?: { event?: string; handler?: number; eventId?: number }) => {
+      invoke: (cmd: string, args?: InvokeArgs) => {
+        invokes.push({ command: cmd, args });
         if (cmd === "plugin:event|listen" && args?.event && args.handler != null) {
           const ids = eventListeners.get(args.event) ?? [];
           ids.push(args.handler);
@@ -134,7 +152,7 @@ async function mockTerminalSession(page: Page, includeHiddenSession = false) {
           );
           return Promise.resolve(undefined);
         }
-        return Promise.resolve(responses[cmd]?.());
+        return Promise.resolve(responses[cmd]?.(args));
       },
       transformCallback: (callback: (data: unknown) => void) => {
         const id = nextCallbackId++;
@@ -159,6 +177,83 @@ async function mockTerminalSession(page: Page, includeHiddenSession = false) {
       };
   }, includeHiddenSession);
 }
+
+async function terminalMetrics(page: Page) {
+  return page.evaluate(() => {
+    const invokes = (
+      window as unknown as {
+        __tauriInvokes: Array<{
+          command: string;
+          args?: Record<string, unknown>;
+        }>;
+      }
+    ).__tauriInvokes;
+    const resizes = invokes.filter(
+      (entry) => entry.command === "pty_resize" && entry.args?.paneId === "pane-ime",
+    );
+    const last = resizes.at(-1)?.args;
+    const cols = Number(last?.cols ?? 0);
+    const screen = document.querySelector<HTMLElement>(".xterm-screen");
+    if (!screen || cols <= 0) throw new Error("terminal metrics are not ready");
+    return {
+      cellWidth: screen.getBoundingClientRect().width / cols,
+      cols,
+      resizeCount: resizes.length,
+    };
+  });
+}
+
+async function resizeCount(page: Page) {
+  return page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __tauriInvokes: Array<{ command: string }>;
+        }
+      ).__tauriInvokes.filter((entry) => entry.command === "pty_resize").length,
+  );
+}
+
+test("terminal font previews, restores, and persists through xterm fitting", async ({ page }) => {
+  await mockTerminalSession(page);
+  await page.goto("/");
+  await expect(page.locator(".xterm-screen")).toBeVisible();
+  await expect.poll(() => resizeCount(page)).toBeGreaterThan(0);
+  const baseline = await terminalMetrics(page);
+
+  await page.locator(".titlebar-settings").click();
+  let dialog = page.getByRole("dialog");
+  await dialog.getByRole("spinbutton").nth(0).fill("24");
+  await expect.poll(() => resizeCount(page)).toBeGreaterThan(baseline.resizeCount);
+  const preview = await terminalMetrics(page);
+  expect(preview.cellWidth).toBeGreaterThan(baseline.cellWidth * 1.25);
+  expect(preview.cols).toBeLessThan(baseline.cols);
+
+  await dialog.getByRole("button", { name: "取消" }).click();
+  await expect.poll(() => resizeCount(page)).toBeGreaterThan(preview.resizeCount);
+  const restored = await terminalMetrics(page);
+  expect(restored.cellWidth).toBeCloseTo(baseline.cellWidth, 1);
+  expect(restored.cols).toBe(baseline.cols);
+
+  await page.locator(".titlebar-settings").click();
+  dialog = page.getByRole("dialog");
+  await dialog.getByRole("spinbutton").nth(0).fill("22");
+  await dialog.getByRole("spinbutton").nth(1).fill("18");
+  await dialog.getByRole("button", { name: "保存" }).click();
+  await expect(dialog).toBeHidden();
+
+  await page.reload();
+  await expect(page.locator(".xterm-screen")).toBeVisible();
+  await expect(page.locator(":root")).toHaveCSS("font-size", "18px");
+  await expect.poll(() => resizeCount(page)).toBeGreaterThan(0);
+  const persisted = await terminalMetrics(page);
+  expect(persisted.cellWidth).toBeGreaterThan(baseline.cellWidth * 1.15);
+  expect(persisted.cols).toBeLessThan(baseline.cols);
+  await page.locator(".titlebar-settings").click();
+  dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("spinbutton").nth(0)).toHaveValue("22");
+  await expect(dialog.getByRole("spinbutton").nth(1)).toHaveValue("18");
+});
 
 test("composition start restores the IME anchor from a stale far-right position", async ({
   page,
