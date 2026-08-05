@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src-tauri",
+    "e2e",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/__mocks__/**"
+  ]
+}

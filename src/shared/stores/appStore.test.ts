@@ -1,9 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import type { ShellProfile } from "../ipc/types";
+import { sortSessions, useAppStore } from "./appStore";
+
+type ProfilesListFn = () => Promise<ShellProfile[]>;
 
 const ipcMocks = vi.hoisted(() => {
   let resolveRestore: ((n: number) => void) | null = null;
+  // Typed explicitly — bare vi.fn(async () => []) becomes Mock of never[] under tsc.
+  const profilesList = vi.fn() as Mock<ProfilesListFn>;
+  profilesList.mockResolvedValue([]);
+
   return {
     bootInfo: vi.fn(async () => ({ recoveredFromCrash: false, readOnly: false, dataDir: "D" })),
     projectList: vi.fn(async () => [
@@ -61,9 +68,7 @@ const ipcMocks = vi.hoisted(() => {
       triggerNotifications: true,
       hardwareAcceleration: true,
     })),
-    // Explicit return type so mockResolvedValueOnce accepts ShellProfile objects
-    // (bare `[]` is inferred as never[] and breaks `tsc` during tauri build).
-    profilesList: vi.fn(async (): Promise<ShellProfile[]> => []),
+    profilesList,
     notificationList: vi.fn(async () => [
       { id: "n1", at: "2026-01-01T00:00:00Z", title: "t", body: "b", read: false },
     ]),
@@ -84,8 +89,6 @@ const ipcMocks = vi.hoisted(() => {
 
 vi.mock("../ipc/client", () => ipcMocks);
 
-import { sortSessions, useAppStore } from "./appStore";
-
 function reset() {
   useAppStore.setState({
     boot: null,
@@ -103,6 +106,14 @@ function reset() {
   });
   ipcMocks.workspaceRestore.mockClear();
   ipcMocks.systemPendingOpenHere.mockClear();
+  ipcMocks.profilesList.mockReset();
+  ipcMocks.profilesList.mockResolvedValue([]);
+  ipcMocks.bootInfo.mockReset();
+  ipcMocks.bootInfo.mockResolvedValue({
+    recoveredFromCrash: false,
+    readOnly: false,
+    dataDir: "D",
+  });
 }
 
 describe("appStore init", () => {

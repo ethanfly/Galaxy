@@ -24,7 +24,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx tsc --noEmit
+      # App/prod sources only — *.test.ts is typechecked by Vitest, not the build tsconfig.
+      - run: npm run typecheck
       - run: npm test
       - run: npm run build
       - name: UI E2E (mocked)
