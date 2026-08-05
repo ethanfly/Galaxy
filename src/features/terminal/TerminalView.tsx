@@ -19,38 +19,12 @@ import {
 import type { Pane, Session } from "../../shared/ipc/types";
 import { registerTerminal, unregisterTerminal, useTerminalStore } from "../../shared/stores/terminalStore";
 import { useAppStore } from "../../shared/stores/appStore";
+import { useUiStore } from "../../shared/stores/uiStore";
+import { resolveAppearance } from "../../shared/appearance";
 import { t } from "../../shared/i18n";
 import { layoutPanes } from "../../shared/utils";
 import { GALAXY_THEME } from "./terminalTheme";
-
-/**
- * Font stack for Latin mono + CJK fallback.
- * Cascadia/Consolas lack Han glyphs; without CJK faces xterm draws □ tofu.
- * Order: readable mono first, then CJK-capable faces Windows/macOS usually ship.
- */
-export const TERMINAL_FONT_FAMILY = [
-  "Cascadia Mono",
-  "Cascadia Code",
-  "JetBrains Mono",
-  "Sarasa Mono SC",
-  "Sarasa Term SC",
-  "Noto Sans Mono CJK SC",
-  "Source Han Mono SC",
-  "Consolas",
-  "Courier New",
-  // CJK UI fonts (double-width; used only for missing mono glyphs)
-  "Microsoft YaHei UI",
-  "Microsoft YaHei",
-  "PingFang SC",
-  "Hiragino Sans GB",
-  "Noto Sans CJK SC",
-  "Source Han Sans SC",
-  "SimHei",
-  "Segoe UI",
-  "monospace",
-]
-  .map((f) => (f.includes(" ") ? `"${f}"` : f))
-  .join(", ");
+import { applyTerminalFontSize, terminalOptions } from "./terminalAppearance";
 
 export const searchAddons = new Map<string, SearchAddon>();
 export const terminals = new Map<string, Terminal>();
@@ -68,22 +42,11 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
   useEffect(() => {
     if (!hostRef.current) return;
     const host = hostRef.current;
-    const config = useAppStore.getState().config;
-
-    const term = new Terminal({
-      fontFamily: TERMINAL_FONT_FAMILY,
-      fontSize: config?.terminalFontSize ?? 14,
-      lineHeight: 1.2,
-      // Slightly wider letter spacing helps some CJK fallback faces.
-      letterSpacing: 0,
-      cursorBlink: true,
-      allowProposedApi: true,
-      scrollback: 10_000,
-      theme: GALAXY_THEME,
-      rightClickSelectsWord: true,
-      // Windows ConPTY wrap + wide-char (CJK double-width) handling.
-      windowsMode: true,
-    });
+    const appearance = resolveAppearance(
+      useAppStore.getState().config,
+      useUiStore.getState().appearancePreview,
+    );
+    const term = new Terminal(terminalOptions(appearance.terminalFontSize));
     const fit = new FitAddon();
     const search = new SearchAddon();
     term.loadAddon(fit);
@@ -333,19 +296,29 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
 
   // Apply font size changes live.
   useEffect(() => {
-    const unsub = useAppStore.subscribe((s) => {
-      const size = s.config?.terminalFontSize;
-      if (size && termRef.current && termRef.current.options.fontSize !== size) {
-        termRef.current.options.fontSize = size;
-        try {
-          fitRef.current?.fit();
-          void ptyResize(pane.id, termRef.current.cols, termRef.current.rows);
-        } catch {
-          /* noop */
+    const applyAppearance = () => {
+      const terminal = termRef.current;
+      const fit = fitRef.current;
+      if (!terminal || !fit) return;
+      const size = resolveAppearance(
+        useAppStore.getState().config,
+        useUiStore.getState().appearancePreview,
+      ).terminalFontSize;
+      try {
+        const dimensions = applyTerminalFontSize(terminal, fit, size);
+        if (dimensions) {
+          void ptyResize(pane.id, dimensions.cols, dimensions.rows);
         }
+      } catch {
+        /* host may be between layout and teardown */
       }
-    });
-    return unsub;
+    };
+    const unsubConfig = useAppStore.subscribe(applyAppearance);
+    const unsubPreview = useUiStore.subscribe(applyAppearance);
+    return () => {
+      unsubConfig();
+      unsubPreview();
+    };
   }, [pane.id]);
 
   void scrollLocked;
