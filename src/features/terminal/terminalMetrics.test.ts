@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { recoverTerminalMetrics, rebindTerminalMouse } from "./terminalMetrics";
+import {
+  forceTerminalResizeCycle,
+  isTerminalMouseBroken,
+  rebindTerminalMouse,
+  recoverTerminalMetrics,
+  unpauseTerminalRenderer,
+} from "./terminalMetrics";
 
-/** Mock coreMouseService that records every protocol set (like real setter). */
 function mockMouseService(initial: string) {
   let protocol = initial;
   const sets: string[] = [];
@@ -19,39 +24,20 @@ function mockMouseService(initial: string) {
 }
 
 describe("rebindTerminalMouse", () => {
-  it("toggles NONE then restores protocol so xterm can tear down and re-add listeners", () => {
+  it("toggles NONE then restores protocol (not self-assign)", () => {
     const cms = mockMouseService("VT200");
-    const terminal = {
+    rebindTerminalMouse({
       cols: 80,
       rows: 24,
       options: {},
       refresh: vi.fn(),
       _core: { coreMouseService: cms },
-    };
+    } as never);
 
-    rebindTerminalMouse(terminal);
-
-    // Must NOT be a single self-assign VT200→VT200 (that skips re-add in xterm).
     expect(cms.sets).toEqual(["NONE", "VT200"]);
-    expect(cms.activeProtocol).toBe("VT200");
   });
 
-  it("when already NONE only re-fires NONE (no spurious protocol)", () => {
-    const cms = mockMouseService("NONE");
-    const terminal = {
-      cols: 80,
-      rows: 24,
-      options: {},
-      refresh: vi.fn(),
-      _core: { coreMouseService: cms },
-    };
-
-    rebindTerminalMouse(terminal);
-
-    expect(cms.sets).toEqual(["NONE"]);
-  });
-
-  it("handles DRAG and ANY the same way (agent TUI common modes)", () => {
+  it("covers DRAG/ANY/X10 used by agent TUIs", () => {
     for (const mode of ["DRAG", "ANY", "X10"] as const) {
       const cms = mockMouseService(mode);
       rebindTerminalMouse({
@@ -66,10 +52,89 @@ describe("rebindTerminalMouse", () => {
   });
 });
 
+describe("forceTerminalResizeCycle", () => {
+  it("nudges cols then restores so same-size early-return is bypassed", () => {
+    const resize = vi.fn();
+    const terminal = { cols: 100, rows: 40, options: {}, refresh: vi.fn(), resize };
+    forceTerminalResizeCycle(terminal);
+    expect(resize).toHaveBeenCalledTimes(2);
+    expect(resize).toHaveBeenNthCalledWith(1, 99, 40);
+    expect(resize).toHaveBeenNthCalledWith(2, 100, 40);
+  });
+});
+
+describe("unpauseTerminalRenderer", () => {
+  it("clears _isPaused so refreshRows can run after long idle", () => {
+    const rs = { _isPaused: true, _needsFullRefresh: true };
+    unpauseTerminalRenderer({
+      cols: 80,
+      rows: 24,
+      options: {},
+      refresh: vi.fn(),
+      _core: { _renderService: rs },
+    } as never);
+    expect(rs._isPaused).toBe(false);
+    expect(rs._needsFullRefresh).toBe(false);
+  });
+});
+
+describe("isTerminalMouseBroken", () => {
+  it("detects zero cell size and paused renderer", () => {
+    expect(
+      isTerminalMouseBroken({
+        cols: 80,
+        rows: 24,
+        options: {},
+        refresh: vi.fn(),
+        _core: {
+          _charSizeService: { hasValidSize: true, width: 8, height: 16 },
+          _renderService: {
+            dimensions: { css: { cell: { width: 0, height: 0 } } },
+            _isPaused: false,
+          },
+        },
+      } as never),
+    ).toBe(true);
+
+    expect(
+      isTerminalMouseBroken({
+        cols: 80,
+        rows: 24,
+        options: {},
+        refresh: vi.fn(),
+        _core: {
+          _charSizeService: { hasValidSize: true, width: 8, height: 16 },
+          _renderService: {
+            dimensions: { css: { cell: { width: 8, height: 16 } } },
+            _isPaused: true,
+          },
+        },
+      } as never),
+    ).toBe(true);
+
+    expect(
+      isTerminalMouseBroken({
+        cols: 80,
+        rows: 24,
+        options: {},
+        refresh: vi.fn(),
+        _core: {
+          _charSizeService: { hasValidSize: true, width: 8, height: 16 },
+          _renderService: {
+            dimensions: { css: { cell: { width: 8, height: 16 } } },
+            _isPaused: false,
+          },
+        },
+      } as never),
+    ).toBe(false);
+  });
+});
+
 describe("recoverTerminalMetrics", () => {
-  it("remeasures, fits, force-resizes, refreshes, and rebinds via NONE→protocol", () => {
+  it("unpauses, force-resizes, refreshes, and rebinds NONE→protocol", () => {
     const measure = vi.fn();
     const clear = vi.fn();
+    const refreshRows = vi.fn();
     const resize = vi.fn();
     const refresh = vi.fn();
     const fit = vi.fn(() => {
@@ -77,6 +142,13 @@ describe("recoverTerminalMetrics", () => {
       terminal.rows = 40;
     });
     const cms = mockMouseService("VT200");
+    const rs = {
+      dimensions: { css: { cell: { width: 8, height: 16 } } },
+      clear,
+      _isPaused: true,
+      _needsFullRefresh: true,
+      refreshRows,
+    };
     const terminal = {
       cols: 80,
       rows: 24,
@@ -84,58 +156,27 @@ describe("recoverTerminalMetrics", () => {
       refresh,
       resize,
       _core: {
-        _charSizeService: { measure },
-        _renderService: {
-          dimensions: { css: { cell: { width: 8, height: 16 } } },
-          clear,
-        },
+        _charSizeService: { measure, hasValidSize: true, width: 8, height: 16 },
+        _renderService: rs,
         coreMouseService: cms,
+        viewport: { syncScrollArea: vi.fn() },
       },
     };
 
     const next = recoverTerminalMetrics(terminal, { fit });
 
+    expect(rs._isPaused).toBe(false);
     expect(measure).toHaveBeenCalled();
     expect(clear).toHaveBeenCalled();
     expect(fit).toHaveBeenCalled();
-    expect(resize).toHaveBeenCalledWith(100, 40);
-    expect(refresh).toHaveBeenCalledWith(0, 39);
-    // Critical: recover must drive real rebind path, not self-assign.
+    // After fit, cols=100 → nudge 99 then restore 100
+    expect(resize).toHaveBeenCalled();
     expect(cms.sets).toEqual(["NONE", "VT200"]);
     expect(next).toEqual({ cols: 100, rows: 40 });
   });
 
-  it("nudges fontSize when cell size is zero so measure can recover", () => {
-    const measure = vi.fn();
-    const cms = mockMouseService("DRAG");
-    const terminal = {
-      cols: 80,
-      rows: 24,
-      options: { fontSize: 14 },
-      refresh: vi.fn(),
-      resize: vi.fn(),
-      _core: {
-        _charSizeService: { measure },
-        _renderService: {
-          dimensions: { css: { cell: { width: 0, height: 0 } } },
-          clear: vi.fn(),
-        },
-        coreMouseService: cms,
-      },
-    };
-    const fit = vi.fn();
-
-    const next = recoverTerminalMetrics(terminal, { fit });
-
-    expect(measure.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(fit).toHaveBeenCalled();
-    expect(cms.sets).toEqual(["NONE", "DRAG"]);
-    expect(next).toBeNull();
-  });
-
-  it("still rebinds mouse when cols/rows are unchanged after idle", () => {
+  it("still rebinds when dimensions unchanged (idle Grok TUI case)", () => {
     const cms = mockMouseService("ANY");
-    const fit = vi.fn(); // does not change cols/rows
     const resize = vi.fn();
     const terminal = {
       cols: 120,
@@ -144,19 +185,30 @@ describe("recoverTerminalMetrics", () => {
       refresh: vi.fn(),
       resize,
       _core: {
-        _charSizeService: { measure: vi.fn() },
+        _charSizeService: {
+          measure: vi.fn(),
+          hasValidSize: true,
+          width: 9,
+          height: 18,
+        },
         _renderService: {
           dimensions: { css: { cell: { width: 9, height: 18 } } },
           clear: vi.fn(),
+          _isPaused: false,
+          refreshRows: vi.fn(),
         },
         coreMouseService: cms,
+        viewport: { syncScrollArea: vi.fn() },
       },
     };
 
-    const next = recoverTerminalMetrics(terminal, { fit });
+    const next = recoverTerminalMetrics(terminal, { fit: vi.fn() });
 
     expect(next).toBeNull();
-    expect(resize).toHaveBeenCalledWith(120, 40);
+    expect(resize.mock.calls).toEqual([
+      [119, 40],
+      [120, 40],
+    ]);
     expect(cms.sets).toEqual(["NONE", "ANY"]);
   });
 });

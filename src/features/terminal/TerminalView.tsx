@@ -285,6 +285,40 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     };
     textarea?.addEventListener("focus", handleTerminalFocus);
 
+    const runRecover = () => {
+      if (!inputAlive) return;
+      if (host.clientWidth < 1 || host.clientHeight < 1) return;
+      try {
+        const next = recoverTerminalMetrics(term, fit);
+        if (next) void ptyResize(pane.id, next.cols, next.rows);
+      } catch {
+        /* mid-teardown */
+      }
+    };
+
+    // Native capture beats React delegation order vs xterm's mousedown and
+    // runs even if a synthetic path is skipped after long WebView idle.
+    const onPointerRecover = () => {
+      if (useTerminalStore.getState().scrollLocked[pane.id]) {
+        useTerminalStore.getState().setScrollLocked(pane.id, false);
+      }
+      runRecover();
+    };
+    host.addEventListener("pointerdown", onPointerRecover, true);
+
+    // While a TUI owns the pane, periodically heal metrics/listeners so a
+    // long idle Grok session does not require exit/re-enter.
+    let healTimer: number | null = null;
+    const armHealTimer = () => {
+      if (healTimer != null) window.clearInterval(healTimer);
+      healTimer = window.setInterval(() => {
+        if (!inputAlive) return;
+        if (term.modes.mouseTrackingMode === "none" && !agentKnown) return;
+        runRecover();
+      }, 20_000);
+    };
+    armHealTimer();
+
     // Initial sizing after first paint.
     const initialFit = requestAnimationFrame(() => {
       if (!inputAlive) return;
@@ -317,6 +351,8 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
         textarea?.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
       }
       cancelAnimationFrame(initialFit);
+      if (healTimer != null) window.clearInterval(healTimer);
+      host.removeEventListener("pointerdown", onPointerRecover, true);
       ro.disconnect();
       inputSub.dispose();
       disposeClipboard();
@@ -416,26 +452,6 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       className="terminal-host"
       data-pane-id={pane.id}
       style={{ backgroundColor: GALAXY_THEME.background }}
-      // Capture phase: recover metrics + rebind mouse BEFORE xterm's mousedown
-      // handler maps coords / sends CSI (otherwise the first click after idle
-      // is still dead and only the second click works).
-      onPointerDownCapture={() => {
-        // stop-scroll trigger locks viewport permanently until cleared — user
-        // interaction implies they want to scroll/click again.
-        if (useTerminalStore.getState().scrollLocked[pane.id]) {
-          useTerminalStore.getState().setScrollLocked(pane.id, false);
-        }
-        const term = termRef.current;
-        const fit = fitRef.current;
-        if (term && fit && hostRef.current && hostRef.current.clientWidth >= 1) {
-          try {
-            const next = recoverTerminalMetrics(term, fit);
-            if (next) void ptyResize(pane.id, next.cols, next.rows);
-          } catch {
-            /* ignore */
-          }
-        }
-      }}
     />
   );
 }

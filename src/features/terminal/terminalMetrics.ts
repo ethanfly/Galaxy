@@ -1,18 +1,24 @@
 /**
- * Recover xterm cell metrics and mouse binding after long idle / WebView
- * suspend / agent TUI stuck state.
+ * Recover xterm after long-idle agent TUI freezes (Grok/Codex/Claude etc.).
  *
- * FitAddon.fit() no-ops when css.cell width/height is 0, and also skips a
- * full render when cols×rows are unchanged — both leave TUI mouse dead.
- * Exiting and re-entering an agent fixes it because the agent re-sends mouse
- * DEC modes (rebinds handlers) and redraws; we do the same without restart.
+ * Failure modes we hit in production:
+ * 1. Char size invalid → getMouseReportCoords returns undefined (clicks no-op).
+ * 2. FitAddon.fit() no-ops when cell w/h is 0.
+ * 3. terminal.resize(cols, rows) early-returns when size unchanged and only
+ *    measures if size invalid — does NOT rebuild render dimensions when size
+ *    looks "valid" but canvas is stale.
+ * 4. RenderService IntersectionObserver can leave _isPaused=true; refreshRows
+ *    then no-ops forever until unpaused.
+ * 5. Mouse protocol listeners need NONE→protocol toggle to re-add (not self-assign).
+ *
+ * Exit/re-enter agent works because DEC mouse off/on + full redraw. We mirror that.
  */
 
 interface FitTarget {
   fit(): void;
 }
 
-interface TerminalMetricsTarget {
+export interface TerminalMetricsTarget {
   cols: number;
   rows: number;
   options: { fontSize?: number };
@@ -21,16 +27,39 @@ interface TerminalMetricsTarget {
 }
 
 type CoreLike = {
-  _charSizeService?: { measure?: () => void };
+  _charSizeService?: {
+    measure?: () => void;
+    hasValidSize?: boolean;
+    width?: number;
+    height?: number;
+  };
   _renderService?: {
     dimensions?: { css?: { cell?: { width: number; height: number } } };
     clear?: () => void;
+    /** private — IntersectionObserver pause flag */
+    _isPaused?: boolean;
+    _needsFullRefresh?: boolean;
+    refreshRows?: (start: number, end: number, isRedrawOnly?: boolean) => void;
   };
   coreMouseService?: { activeProtocol: string };
+  viewport?: { syncScrollArea?: (force?: boolean) => void };
 };
 
 function coreOf(terminal: TerminalMetricsTarget): CoreLike | undefined {
   return (terminal as unknown as { _core?: CoreLike })._core;
+}
+
+/** True when mouse CSI reports would be dropped or coords invalid. */
+export function isTerminalMouseBroken(terminal: TerminalMetricsTarget): boolean {
+  const core = coreOf(terminal);
+  if (!core) return false;
+  const charOk = core._charSizeService?.hasValidSize !== false
+    && (core._charSizeService?.width ?? 1) > 0
+    && (core._charSizeService?.height ?? 1) > 0;
+  const cell = core._renderService?.dimensions?.css?.cell;
+  const cellOk = !!cell && cell.width > 0 && cell.height > 0;
+  const paused = core._renderService?._isPaused === true;
+  return !charOk || !cellOk || paused;
 }
 
 function forceCharMeasure(terminal: TerminalMetricsTarget): void {
@@ -40,12 +69,15 @@ function forceCharMeasure(terminal: TerminalMetricsTarget): void {
   } catch {
     /* private API */
   }
-  // If measure still reports 0 (e.g. DOM measure while frozen), nudge fontSize
-  // so CharSizeService's option listener re-runs measure after paint.
   const cell = core?._renderService?.dimensions?.css?.cell;
-  if (cell && (cell.width === 0 || cell.height === 0)) {
+  const charInvalid =
+    core?._charSizeService?.hasValidSize === false ||
+    (core?._charSizeService?.width ?? 1) <= 0 ||
+    (cell != null && (cell.width === 0 || cell.height === 0));
+  if (charInvalid) {
     const size = terminal.options.fontSize ?? 14;
     try {
+      // Option change forces CharSizeService to remeasure.
       terminal.options.fontSize = size + 0.001;
       terminal.options.fontSize = size;
       core?._charSizeService?.measure?.();
@@ -56,44 +88,81 @@ function forceCharMeasure(terminal: TerminalMetricsTarget): void {
 }
 
 /**
+ * Unstick RenderService after IntersectionObserver left it paused while the
+ * pane is actually on-screen (common after long idle / OS power throttling).
+ */
+export function unpauseTerminalRenderer(terminal: TerminalMetricsTarget): void {
+  const rs = coreOf(terminal)?._renderService;
+  if (!rs) return;
+  try {
+    if (rs._isPaused) {
+      rs._isPaused = false;
+      rs._needsFullRefresh = false;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
  * Tear down and rebind xterm mouse listeners (element + document).
- *
- * Self-assigning activeProtocol is NOT enough: onProtocolChange only adds
- * listeners when requestedEvents.* is null (Terminal.ts). If wheel/move/up
- * handlers are already registered, VT200→VT200 is a no-op rebind.
- * Agent exit (?1000l) sets NONE (clears requestedEvents to null); re-enter
- * (?1000h) restores the protocol and re-adds listeners. Mirror that path.
+ * Must go through NONE so requestedEvents slots are nullified before re-add.
  */
 export function rebindTerminalMouse(terminal: TerminalMetricsTarget): void {
   const cms = coreOf(terminal)?.coreMouseService;
   if (!cms) return;
   try {
     const previous = cms.activeProtocol || "NONE";
-    // Always go through NONE so event bits become 0 and handlers are removed
-    // and nullified; then restore so addEventListener runs again.
     if (previous !== "NONE") {
       cms.activeProtocol = "NONE";
     }
     cms.activeProtocol = previous === "NONE" ? "NONE" : previous;
   } catch {
-    /* unknown protocol name / private API */
+    /* unknown protocol / private API */
   }
 }
 
 /**
- * Remeasure, fit, force full refresh, rebind mouse. Returns new cols/rows when
- * they change (caller should ptyResize); null when unchanged or not ready.
+ * Force a real core resize even when cols×rows are unchanged.
+ * Public Terminal.resize(same,same) early-returns without rebuilding dimensions.
+ */
+export function forceTerminalResizeCycle(
+  terminal: TerminalMetricsTarget,
+): void {
+  if (typeof terminal.resize !== "function") return;
+  const cols = terminal.cols;
+  const rows = terminal.rows;
+  if (cols < 2 || rows < 1) return;
+  try {
+    // Nudge then restore — takes the full resize path (measure, viewport sync).
+    const nudgeCols = cols > 2 ? cols - 1 : cols + 1;
+    terminal.resize(nudgeCols, rows);
+    terminal.resize(cols, rows);
+  } catch {
+    try {
+      terminal.resize(cols, rows);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * Full recovery. Returns new cols/rows when fit changed dimensions.
  */
 export function recoverTerminalMetrics(
   terminal: TerminalMetricsTarget,
   fit: FitTarget,
 ): { cols: number; rows: number } | null {
   const before = `${terminal.cols}x${terminal.rows}`;
+
+  unpauseTerminalRenderer(terminal);
   forceCharMeasure(terminal);
+
   try {
     fit.fit();
   } catch {
-    return null;
+    /* host not laid out */
   }
 
   const core = coreOf(terminal);
@@ -103,18 +172,20 @@ export function recoverTerminalMetrics(
     /* ignore */
   }
 
-  // FitAddon only resizes when cols/rows change. Force a same-size resize so
-  // render dimensions rebuild after a long idle with a live agent TUI.
-  if (typeof terminal.resize === "function" && terminal.cols > 0 && terminal.rows > 0) {
-    try {
-      terminal.resize(terminal.cols, terminal.rows);
-    } catch {
-      /* ignore */
-    }
+  forceTerminalResizeCycle(terminal);
+
+  try {
+    core?.viewport?.syncScrollArea?.(true);
+  } catch {
+    /* ignore */
   }
+
+  unpauseTerminalRenderer(terminal);
 
   if (terminal.rows > 0) {
     try {
+      // Bypass debounced pause if we just cleared it.
+      core?._renderService?.refreshRows?.(0, terminal.rows - 1);
       terminal.refresh(0, terminal.rows - 1);
     } catch {
       /* mid-teardown */
