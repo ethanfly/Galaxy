@@ -37,6 +37,39 @@ describe("rebindTerminalMouse", () => {
     expect(cms.sets).toEqual(["NONE", "VT200"]);
   });
 
+  it("restores SGR when protocol is active but encoding fell back to DEFAULT", () => {
+    let protocol = "VT200";
+    let encoding = "DEFAULT";
+    const sets: string[] = [];
+    const encodings: string[] = [];
+    const service = {
+      get activeProtocol() {
+        return protocol;
+      },
+      set activeProtocol(name: string) {
+        protocol = name;
+        sets.push(name);
+      },
+      get activeEncoding() {
+        return encoding;
+      },
+      set activeEncoding(name: string) {
+        encoding = name;
+        encodings.push(name);
+      },
+    };
+    rebindTerminalMouse({
+      cols: 80,
+      rows: 24,
+      options: {},
+      refresh: vi.fn(),
+      _core: { coreMouseService: service },
+    } as never);
+    expect(sets).toEqual(["NONE", "VT200"]);
+    expect(encodings).toEqual(["SGR"]);
+    expect(service.activeEncoding).toBe("SGR");
+  });
+
   it("covers DRAG/ANY/X10 used by agent TUIs", () => {
     for (const mode of ["DRAG", "ANY", "X10"] as const) {
       const cms = mockMouseService(mode);

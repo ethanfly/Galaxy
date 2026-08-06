@@ -41,7 +41,10 @@ type CoreLike = {
     _needsFullRefresh?: boolean;
     refreshRows?: (start: number, end: number, isRedrawOnly?: boolean) => void;
   };
-  coreMouseService?: { activeProtocol: string };
+  coreMouseService?: {
+    activeProtocol: string;
+    activeEncoding?: string;
+  };
   viewport?: { syncScrollArea?: (force?: boolean) => void };
 };
 
@@ -113,10 +116,31 @@ export function rebindTerminalMouse(terminal: TerminalMetricsTarget): void {
   if (!cms) return;
   try {
     const previous = cms.activeProtocol || "NONE";
+    const previousEncoding = cms.activeEncoding || "DEFAULT";
     if (previous !== "NONE") {
       cms.activeProtocol = "NONE";
     }
     cms.activeProtocol = previous === "NONE" ? "NONE" : previous;
+    // Agent TUIs enable SGR (1006). Soft resets often drop encoding to DEFAULT
+    // while leaving protocol on — DEFAULT reports go to onBinary. Prefer SGR
+    // when mouse is active so reports stay on the normal data path too.
+    if (
+      previous !== "NONE" &&
+      previousEncoding === "DEFAULT" &&
+      typeof cms.activeEncoding === "string"
+    ) {
+      try {
+        cms.activeEncoding = "SGR";
+      } catch {
+        /* ignore */
+      }
+    } else if (previousEncoding && previousEncoding !== "DEFAULT") {
+      try {
+        cms.activeEncoding = previousEncoding;
+      } catch {
+        /* ignore */
+      }
+    }
   } catch {
     /* unknown protocol / private API */
   }

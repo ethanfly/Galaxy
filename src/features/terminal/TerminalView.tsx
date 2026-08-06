@@ -29,6 +29,7 @@ import { applyTerminalFontSize, terminalOptions } from "./terminalAppearance";
 import { installTerminalClipboard } from "./terminalClipboard";
 import { createAgentScreenObserver, readAgentScreen } from "./agentScreenObserver";
 import { recoverTerminalMetrics } from "./terminalMetrics";
+import { attachTerminalUserInput } from "./terminalInput";
 
 export const searchAddons = new Map<string, SearchAddon>();
 export const terminals = new Map<string, Terminal>();
@@ -265,8 +266,8 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     );
 
     // Input: direct, unbatched. Sync-input fans out to the whole session.
-    // Guard against disposed terminals still receiving key events briefly.
-    const inputSub = term.onData((data) => {
+    // onData + onBinary — see attachTerminalUserInput / terminalInput.ts.
+    const sendUserInput = (data: string) => {
       if (!inputAlive) return;
       const sess = useAppStore.getState().sessions.find((s) => s.id === session.id);
       if (sess?.syncInput) {
@@ -274,7 +275,8 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       } else {
         void ptyWrite(pane.id, data);
       }
-    });
+    };
+    const detachInput = attachTerminalUserInput(term, sendUserInput);
     // Select-to-copy (and Ctrl+C / Ctrl+Shift+C when a selection exists).
     const disposeClipboard = installTerminalClipboard(term);
     const bellSub = term.onBell(() => {
@@ -354,7 +356,7 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       if (healTimer != null) window.clearInterval(healTimer);
       host.removeEventListener("pointerdown", onPointerRecover, true);
       ro.disconnect();
-      inputSub.dispose();
+      detachInput();
       disposeClipboard();
       bellSub.dispose();
       renderSub.dispose();
