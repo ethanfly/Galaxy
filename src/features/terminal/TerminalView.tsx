@@ -28,6 +28,7 @@ import { GALAXY_THEME } from "./terminalTheme";
 import { applyTerminalFontSize, terminalOptions } from "./terminalAppearance";
 import { installTerminalClipboard } from "./terminalClipboard";
 import { createAgentScreenObserver, readAgentScreen } from "./agentScreenObserver";
+import { recoverTerminalMetrics } from "./terminalMetrics";
 
 export const searchAddons = new Map<string, SearchAddon>();
 export const terminals = new Map<string, Terminal>();
@@ -224,18 +225,9 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     const refitMetrics = (): { cols: number; rows: number } | null => {
       if (!inputAlive) return null;
       if (host.clientWidth < 1 || host.clientHeight < 1) return null;
-      try {
-        const before = `${term.cols}x${term.rows}`;
-        fit.fit();
-        // Keep render-service cell size aligned with input mapping (TUI mouse).
-        if (term.rows > 0) term.refresh(0, term.rows - 1);
-        if (`${term.cols}x${term.rows}` !== before) {
-          return { cols: term.cols, rows: term.rows };
-        }
-        return null;
-      } catch {
-        return null;
-      }
+      // Force char remeasure first — FitAddon no-ops when cell size is 0,
+      // which happens after long idle / WebView suspend and kills TUI mouse.
+      return recoverTerminalMetrics(term, fit);
     };
 
     // Register replay/write surface for the batching pipeline. The sequence
@@ -301,12 +293,9 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       // and once metrics collapse it cannot recover without a real layout.
       if (host.clientWidth < 1 || host.clientHeight < 1) return;
       try {
-        const before = `${term.cols}x${term.rows}`;
-        fit.fit();
+        const next = recoverTerminalMetrics(term, fit);
         if (imeComposing) scheduleImeConstraint();
-        if (`${term.cols}x${term.rows}` !== before) {
-          void ptyResize(pane.id, term.cols, term.rows);
-        }
+        if (next) void ptyResize(pane.id, next.cols, next.rows);
       } catch {
         /* during teardown */
       }
@@ -365,12 +354,8 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       // refresh() is required so TUI mouse coords match the live cell size.
       if (host && term && fit && host.clientWidth >= 1 && host.clientHeight >= 1) {
         try {
-          const before = `${term.cols}x${term.rows}`;
-          fit.fit();
-          if (term.rows > 0) term.refresh(0, term.rows - 1);
-          if (`${term.cols}x${term.rows}` !== before) {
-            void ptyResize(pane.id, term.cols, term.rows);
-          }
+          const next = recoverTerminalMetrics(term, fit);
+          if (next) void ptyResize(pane.id, next.cols, next.rows);
         } catch {
           /* not laid out yet */
         }
@@ -422,6 +407,24 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       className="terminal-host"
       data-pane-id={pane.id}
       style={{ backgroundColor: GALAXY_THEME.background }}
+      onPointerDown={() => {
+        // stop-scroll trigger locks viewport permanently until cleared — user
+        // interaction implies they want to scroll/click again.
+        if (useTerminalStore.getState().scrollLocked[pane.id]) {
+          useTerminalStore.getState().setScrollLocked(pane.id, false);
+        }
+        // Cheap recovery if cell metrics went stale while the window slept.
+        const term = termRef.current;
+        const fit = fitRef.current;
+        if (term && fit && hostRef.current && hostRef.current.clientWidth >= 1) {
+          try {
+            const next = recoverTerminalMetrics(term, fit);
+            if (next) void ptyResize(pane.id, next.cols, next.rows);
+          } catch {
+            /* ignore */
+          }
+        }
+      }}
     />
   );
 }

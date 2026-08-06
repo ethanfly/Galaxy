@@ -24,6 +24,7 @@ import { refitAllTerminals, useTerminalStore } from "./shared/stores/terminalSto
 import { useUiStore } from "./shared/stores/uiStore";
 import { DEFAULT_APPEARANCE } from "./shared/appearance";
 import { subscribeDevicePixelRatio } from "./shared/dpr";
+import { subscribeResumeInteraction } from "./shared/visibility";
 import { useShortcuts } from "./features/shortcuts/useShortcuts";
 import { t } from "./shared/i18n";
 import { IconAlert } from "./shared/icons/Icons";
@@ -51,6 +52,21 @@ export default function App() {
     return subscribeDevicePixelRatio(() => {
       refitAllTerminals((paneId, cols, rows) => {
         void ptyResize(paneId, cols, rows);
+      });
+    });
+  }, []);
+
+  // After long idle / minimize / lock-screen, WebView may zero char metrics.
+  // FitAddon then no-ops and TUI mouse + scrollbar die until we remeasure.
+  useEffect(() => {
+    return subscribeResumeInteraction(() => {
+      // Double rAF: wait for layout after the window is shown again.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          refitAllTerminals((paneId, cols, rows) => {
+            void ptyResize(paneId, cols, rows);
+          });
+        });
       });
     });
   }, []);
