@@ -15,6 +15,7 @@ import {
   ptyObserveScreen,
   ptyResize,
   ptyWrite,
+  ptyWriteBytes,
   systemOpenExternal,
 } from "../../shared/ipc/client";
 import type { Pane, Session } from "../../shared/ipc/types";
@@ -29,7 +30,7 @@ import { applyTerminalFontSize, terminalOptions } from "./terminalAppearance";
 import { installTerminalClipboard } from "./terminalClipboard";
 import { createAgentScreenObserver, readAgentScreen } from "./agentScreenObserver";
 import { recoverTerminalMetrics } from "./terminalMetrics";
-import { attachTerminalUserInput } from "./terminalInput";
+import { attachTerminalUserInput, binaryStringToBytes } from "./terminalInput";
 
 export const searchAddons = new Map<string, SearchAddon>();
 export const terminals = new Map<string, Terminal>();
@@ -266,8 +267,8 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     );
 
     // Input: direct, unbatched. Sync-input fans out to the whole session.
-    // onData + onBinary — see attachTerminalUserInput / terminalInput.ts.
-    const sendUserInput = (data: string) => {
+    // onData (text/SGR mouse) + onBinary (DEFAULT mouse as raw bytes).
+    const sendTextInput = (data: string) => {
       if (!inputAlive) return;
       const sess = useAppStore.getState().sessions.find((s) => s.id === session.id);
       if (sess?.syncInput) {
@@ -276,7 +277,12 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
         void ptyWrite(pane.id, data);
       }
     };
-    const detachInput = attachTerminalUserInput(term, sendUserInput);
+    const sendBinaryInput = (data: string) => {
+      if (!inputAlive) return;
+      // DEFAULT mouse encoding is latin1 bytes; UTF-8 string IPC corrupts it.
+      void ptyWriteBytes(pane.id, binaryStringToBytes(data));
+    };
+    const detachInput = attachTerminalUserInput(term, sendTextInput, sendBinaryInput);
     // Select-to-copy (and Ctrl+C / Ctrl+Shift+C when a selection exists).
     const disposeClipboard = installTerminalClipboard(term);
     const bellSub = term.onBell(() => {

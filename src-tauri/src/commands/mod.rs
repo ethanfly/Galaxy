@@ -31,6 +31,7 @@ macro_rules! all_commands {
             crate::commands::workspace::recovery_clean_start,
             // pty
             crate::commands::pty_cmds::pty_write,
+            crate::commands::pty_cmds::pty_write_bytes,
             crate::commands::pty_cmds::pty_broadcast,
             crate::commands::pty_cmds::pty_resize,
             crate::commands::pty_cmds::pty_replay,

@@ -18,6 +18,20 @@ pub fn pty_write(
     state.pty().write_input(&pane_id, &data).cmd()
 }
 
+/// Raw bytes from xterm `onBinary` (DEFAULT mouse encoding). Values are 0–255
+/// latin1 code units — must not pass through UTF-8 string re-encoding.
+#[tauri::command]
+pub fn pty_write_bytes(
+    state: State<'_, Arc<AppState>>,
+    pane_id: String,
+    bytes: Vec<u8>,
+) -> CmdResult<()> {
+    state
+        .pty()
+        .write_input_bytes(&pane_id, &bytes, None)
+        .cmd()
+}
+
 /// Synchronized input broadcast: write to every pane of the session (§5.2).
 #[tauri::command]
 pub fn pty_broadcast(

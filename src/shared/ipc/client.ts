@@ -109,6 +109,11 @@ function enqueuePtyWrite(key: string, task: () => Promise<void>): Promise<void> 
 
 export const ptyWrite = (paneId: string, data: string) =>
   enqueuePtyWrite(`pane:${paneId}`, () => call<void>("pty_write", { paneId, data }));
+
+/** Latin-1 / DEFAULT mouse reports from xterm onBinary — raw 0–255 bytes. */
+export const ptyWriteBytes = (paneId: string, bytes: number[]) =>
+  enqueuePtyWrite(`pane:${paneId}`, () => call<void>("pty_write_bytes", { paneId, bytes }));
+
 export const ptyBroadcast = (sessionId: string, data: string) =>
   enqueuePtyWrite(`session:${sessionId}`, () =>
     call<void>("pty_broadcast", { sessionId, data }),

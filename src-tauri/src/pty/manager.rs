@@ -440,6 +440,17 @@ impl PtyManager {
     /// Keyboard input — direct, never batched. Input is also tracked so
     /// command blocks and title fallbacks can attribute commands.
     pub fn write_input(&self, pane_id: &str, data: &str) -> Result<(), AppError> {
+        self.write_input_bytes(pane_id, data.as_bytes(), Some(data))
+    }
+
+    /// Raw PTY bytes (xterm DEFAULT mouse encoding uses onBinary with
+    /// latin1-style single-byte chars). Do not UTF-8 re-encode.
+    pub fn write_input_bytes(
+        &self,
+        pane_id: &str,
+        bytes: &[u8],
+        text_for_tracking: Option<&str>,
+    ) -> Result<(), AppError> {
         // 1) Deliver bytes to the PTY first so Enter is never delayed/blocked
         //    by history / agent side-effects (and never hold the processes map
         //    lock across a potentially blocking write).
@@ -450,10 +461,19 @@ impl PtyManager {
                 .map(|e| e.process.clone())
                 .ok_or_else(|| AppError::Pty("pane 对应的终端进程不存在".into()))?
         };
-        proc.write(data.as_bytes())?;
+        proc.write(bytes)?;
 
         // 2) Update command-line tracking; collect side effects without holding
         //    panes across sink callbacks (those may lock store / persist).
+        // Binary mouse reports skip line tracking (only touch activity).
+        let Some(data) = text_for_tracking else {
+            let mut panes = self.panes.lock();
+            if let Some(ctx) = panes.get_mut(pane_id) {
+                ctx.tracker.touch();
+            }
+            return Ok(());
+        };
+
         let mut sides: Vec<PaneSideEffect> = Vec::new();
         let mut detected: Option<(u64, AgentKind)> = None;
         {
