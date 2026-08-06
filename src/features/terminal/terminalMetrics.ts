@@ -1,7 +1,11 @@
 /**
- * Recover xterm cell metrics after long idle / WebView suspend / zeroed
- * char sizes. FitAddon.fit() no-ops when css.cell width/height is 0, so we
- * must remeasure first or TUI mouse coords and scrolling stay dead.
+ * Recover xterm cell metrics and mouse binding after long idle / WebView
+ * suspend / agent TUI stuck state.
+ *
+ * FitAddon.fit() no-ops when css.cell width/height is 0, and also skips a
+ * full render when cols×rows are unchanged — both leave TUI mouse dead.
+ * Exiting and re-entering an agent fixes it because the agent re-sends mouse
+ * DEC modes (rebinds handlers) and redraws; we do the same without restart.
  */
 
 interface FitTarget {
@@ -13,16 +17,24 @@ interface TerminalMetricsTarget {
   rows: number;
   options: { fontSize?: number };
   refresh(start: number, end: number): void;
+  resize?(cols: number, rows: number): void;
+}
+
+type CoreLike = {
+  _charSizeService?: { measure?: () => void };
+  _renderService?: {
+    dimensions?: { css?: { cell?: { width: number; height: number } } };
+    clear?: () => void;
+  };
+  coreMouseService?: { activeProtocol: string };
+};
+
+function coreOf(terminal: TerminalMetricsTarget): CoreLike | undefined {
+  return (terminal as unknown as { _core?: CoreLike })._core;
 }
 
 function forceCharMeasure(terminal: TerminalMetricsTarget): void {
-  const core = (terminal as unknown as { _core?: {
-    _charSizeService?: { measure?: () => void };
-    _renderService?: {
-      dimensions?: { css?: { cell?: { width: number; height: number } } };
-      clear?: () => void;
-    };
-  } })._core;
+  const core = coreOf(terminal);
   try {
     core?._charSizeService?.measure?.();
   } catch {
@@ -41,16 +53,26 @@ function forceCharMeasure(terminal: TerminalMetricsTarget): void {
       /* ignore */
     }
   }
+}
+
+/**
+ * Re-fire mouse protocol change so xterm rebinds document/element listeners.
+ * Matches what happens when an agent exits (sends ?1000l) and re-enters (?1000h).
+ */
+export function rebindTerminalMouse(terminal: TerminalMetricsTarget): void {
+  const cms = coreOf(terminal)?.coreMouseService;
+  if (!cms) return;
   try {
-    core?._renderService?.clear?.();
+    // Self-assign forces onProtocolChange (same trick xterm uses at open()).
+    cms.activeProtocol = cms.activeProtocol;
   } catch {
     /* ignore */
   }
 }
 
 /**
- * Remeasure, fit, and full-refresh. Returns new cols/rows when they change
- * (caller should ptyResize); null when unchanged or host not ready.
+ * Remeasure, fit, force full refresh, rebind mouse. Returns new cols/rows when
+ * they change (caller should ptyResize); null when unchanged or not ready.
  */
 export function recoverTerminalMetrics(
   terminal: TerminalMetricsTarget,
@@ -63,6 +85,24 @@ export function recoverTerminalMetrics(
   } catch {
     return null;
   }
+
+  const core = coreOf(terminal);
+  try {
+    core?._renderService?.clear?.();
+  } catch {
+    /* ignore */
+  }
+
+  // FitAddon only resizes when cols/rows change. Force a same-size resize so
+  // render dimensions rebuild after a long idle with a live agent TUI.
+  if (typeof terminal.resize === "function" && terminal.cols > 0 && terminal.rows > 0) {
+    try {
+      terminal.resize(terminal.cols, terminal.rows);
+    } catch {
+      /* ignore */
+    }
+  }
+
   if (terminal.rows > 0) {
     try {
       terminal.refresh(0, terminal.rows - 1);
@@ -70,6 +110,9 @@ export function recoverTerminalMetrics(
       /* mid-teardown */
     }
   }
+
+  rebindTerminalMouse(terminal);
+
   if (`${terminal.cols}x${terminal.rows}` !== before) {
     return { cols: terminal.cols, rows: terminal.rows };
   }

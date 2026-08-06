@@ -242,18 +242,27 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     };
     registerTerminal(handle);
 
-    let unsubAgentRecognition = () => {};
-    if (!agentKnown) {
-      unsubAgentRecognition = useTerminalStore.subscribe(
-        (state) => state.agentStatus[pane.id],
-        (status) => {
-          if (!status) return;
+    // Agent status changes (including re-enter after exit) re-send mouse DEC
+    // modes in a healthy run; when they don't (stuck long idle), recover metrics
+    // and rebind mouse handlers so TUI clicks work without restarting the agent.
+    const unsubAgentStatus = useTerminalStore.subscribe(
+      (state) => state.agentStatus[pane.id],
+      (status, prev) => {
+        if (!status) return;
+        if (!agentKnown) {
           agentKnown = true;
           screenObserver.schedule();
-          unsubAgentRecognition();
-        },
-      );
-    }
+        }
+        if (status.status === prev?.status && status.kind === prev?.kind) return;
+        if (host.clientWidth < 1 || host.clientHeight < 1) return;
+        try {
+          const next = recoverTerminalMetrics(term, fit);
+          if (next) void ptyResize(pane.id, next.cols, next.rows);
+        } catch {
+          /* mid-teardown */
+        }
+      },
+    );
 
     // Input: direct, unbatched. Sync-input fans out to the whole session.
     // Guard against disposed terminals still receiving key events briefly.
@@ -313,7 +322,7 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       disposeClipboard();
       bellSub.dispose();
       renderSub.dispose();
-      unsubAgentRecognition();
+      unsubAgentStatus();
       screenObserver.dispose();
       textarea?.removeEventListener("focus", handleTerminalFocus);
       textarea?.removeEventListener("compositionstart", syncImeAnchor, true);
