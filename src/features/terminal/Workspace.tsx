@@ -42,26 +42,27 @@ export function Workspace() {
     );
   }
 
-  // Keep every loaded session's terminals mounted (inactive ones hidden with
-  // display:none) so xterm state, scrollback and running output survive tab
-  // switches — a single pane's PTY never gets torn down by navigation.
+  // Keep every loaded session's terminals mounted. Inactive sessions use
+  // visibility:hidden (not display:none) so xterm cell metrics stay valid —
+  // display:none collapses the host to 0×0, which permanently breaks FitAddon
+  // recovery and TUI mouse tracking (coords divide by cell width/height).
+  // Mirrors terminal-surface ↔ insights-surface stacking in App.tsx.
   return (
-    <>
-      {sessions.map((session) => (
-        <div
-          key={session.id}
-          data-session-id={session.id}
-          style={{
-            display: session.id === currentSessionId ? "flex" : "none",
-            flex: 1,
-            minHeight: 0,
-            flexDirection: "column",
-          }}
-        >
-          <LayoutRenderer node={session.layout} session={session} path={[]} />
-        </div>
-      ))}
-    </>
+    <div className="session-stack" data-testid="workspace-instance">
+      {sessions.map((session) => {
+        const active = session.id === currentSessionId;
+        return (
+          <div
+            key={session.id}
+            data-session-id={session.id}
+            className={`session-surface ${active ? "active" : "inactive"}`}
+            aria-hidden={!active}
+          >
+            <LayoutRenderer node={session.layout} session={session} path={[]} />
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

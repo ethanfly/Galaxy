@@ -279,6 +279,9 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
 
     const ro = new ResizeObserver(() => {
       if (!inputAlive) return;
+      // Skip collapsed hosts. FitAddon also bails when cell width/height is 0,
+      // and once metrics collapse it cannot recover without a real layout.
+      if (host.clientWidth < 1 || host.clientHeight < 1) return;
       try {
         const before = `${term.cols}x${term.rows}`;
         fit.fit();
@@ -321,8 +324,9 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pane.id, session.id]);
 
-  // Hidden sessions stay mounted to preserve scrollback. Focus only the
-  // selected session's remembered pane when tabs change.
+  // Hidden sessions stay mounted to preserve scrollback. When a tab becomes
+  // current again, re-fit (defense if metrics were ever zeroed) and focus the
+  // session's remembered pane.
   useEffect(() => {
     if (currentSessionId !== session.id) return;
     const currentSession = useAppStore
@@ -333,16 +337,32 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     const preferredPane = panes.some((item) => item.id === focusedPane)
       ? focusedPane
       : (panes.find((item) => item.active)?.id ?? panes[0]?.id);
-    if (preferredPane !== pane.id) return;
 
     const frame = requestAnimationFrame(() => {
+      const host = hostRef.current;
+      const term = termRef.current;
+      const fit = fitRef.current;
+      // Always re-measure when the session is shown — host may have been
+      // display:none historically, or the window resized while inactive.
+      if (host && term && fit && host.clientWidth >= 1 && host.clientHeight >= 1) {
+        try {
+          const before = `${term.cols}x${term.rows}`;
+          fit.fit();
+          if (`${term.cols}x${term.rows}` !== before) {
+            void ptyResize(pane.id, term.cols, term.rows);
+          }
+        } catch {
+          /* not laid out yet */
+        }
+      }
+      if (preferredPane !== pane.id) return;
       if (
         document.querySelector('[role="dialog"][aria-modal="true"]') ||
         document.querySelector(".find-bar:focus-within")
       ) {
         return;
       }
-      termRef.current?.focus();
+      term?.focus();
     });
     return () => cancelAnimationFrame(frame);
   }, [currentSessionId, pane.id, paneIdsKey, session.id]);

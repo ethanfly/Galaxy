@@ -543,6 +543,28 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
   display: flex;
   flex-direction: column;
 }
+/* Stack all session surfaces in one cell so inactive tabs keep real layout
+   metrics (visibility:hidden). display:none would zero xterm cell size and
+   break agent TUI mouse reports after tab switches. */
+.session-stack {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  position: relative;
+}
+.session-surface {
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.session-surface.inactive {
+  visibility: hidden;
+  pointer-events: none;
+}
 .split-container { display: flex; flex: 1; min-height: 0; min-width: 0; }
 .split-container.row { flex-direction: row; }
 .split-container.column { flex-direction: column; }

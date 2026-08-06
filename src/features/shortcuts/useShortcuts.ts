@@ -158,8 +158,12 @@ type Direction = "left" | "right" | "up" | "down";
 /** Geometric pane navigation using rendered rects (DOM data-pane-id). */
 function focusDirectional(sessionId: string, dir: Direction) {
   const ts = useTerminalStore.getState();
+  // Only the active session surface participates in pointer geometry. Inactive
+  // tabs stay mounted with real layout (visibility:hidden) for xterm metrics,
+  // so we must not navigate into their panes.
   const sessionRoot = [...document.querySelectorAll<HTMLElement>("[data-session-id]")].find(
-    (element) => element.dataset.sessionId === sessionId,
+    (element) =>
+      element.dataset.sessionId === sessionId && !element.classList.contains("inactive"),
   );
   const panes = sessionRoot
     ? [...sessionRoot.querySelectorAll<HTMLElement>("[data-pane-id]")].filter(
