@@ -1,5 +1,5 @@
 // Notification center in the statusbar-facing panel (§5.4, §5.6).
-import { notificationMarkRead } from "../../shared/ipc/client";
+import { appRelaunch, notificationMarkRead } from "../../shared/ipc/client";
 import type { NotificationItem } from "../../shared/ipc/types";
 import { useAppStore } from "../../shared/stores/appStore";
 import { layoutPanes, formatDateTime } from "../../shared/utils";
@@ -46,6 +46,19 @@ export function NotificationsPanel() {
           <div className="notif-title">{n.title}</div>
           <div className="notif-body">{n.body}</div>
           <div className="notif-time">{formatDateTime(n.at)}</div>
+          {n.action === "app.relaunch" && (
+            <button
+              type="button"
+              className="btn primary"
+              style={{ marginTop: 8 }}
+              onClick={(e) => {
+                e.stopPropagation();
+                void appRelaunch();
+              }}
+            >
+              {t("restartNow")}
+            </button>
+          )}
         </div>
       ))}
     </div>

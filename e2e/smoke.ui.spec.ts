@@ -57,6 +57,7 @@ async function mockTauri(page: Page, language = "zh-CN", populated = false) {
         contextMenuEnabled: true,
         agentNotifications: true,
         triggerNotifications: true,
+        autoCheckUpdate: true,
         shortcuts: [
           { command: "search.find", keys: "Ctrl+F", enabled: true },
           { command: "command.palette", keys: "Ctrl+P", enabled: true },
@@ -112,6 +113,13 @@ async function mockTauri(page: Page, language = "zh-CN", populated = false) {
         return store.config;
       },
       window_save_state: noop,
+      updater_check: () => ({ available: false, version: null, notes: "开发构建跳过更新检查" }),
+      updater_download_and_install: () => ({
+        installed: false,
+        version: null,
+        message: "开发构建无法安装更新",
+      }),
+      app_relaunch: noop,
     };
     (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = {
       invoke: (cmd: string, args?: Record<string, unknown>) => {

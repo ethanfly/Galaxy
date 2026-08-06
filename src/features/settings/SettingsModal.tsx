@@ -260,6 +260,17 @@ function GeneralSection({
         </div>
       </div>
       <div className="form-row">
+        <label>{t("autoCheckUpdate")}</label>
+        <div className="form-value">
+          <input
+            type="checkbox"
+            checked={draft.autoCheckUpdate !== false}
+            onChange={(e) => update({ autoCheckUpdate: e.target.checked })}
+          />
+          <span style={{ color: "var(--text-lo)" }}>{t("autoCheckUpdateHint")}</span>
+        </div>
+      </div>
+      <div className="form-row">
         <label>硬件加速</label>
         <div className="form-value">
           <input
@@ -755,6 +766,8 @@ function DiagnosticsSection() {
   const [info, setInfo] = useState<DiagnosticsInfo | null>(null);
   const [report, setReport] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string | null>(null);
 
   useEffect(() => {
     void ipc.diagnosticsInfo().then(setInfo);
@@ -765,6 +778,39 @@ function DiagnosticsSection() {
   const genReport = async () => {
     const r = await ipc.diagnosticsReport();
     setReport(r);
+  };
+
+  const runUpdateCheck = async () => {
+    setUpdateBusy(true);
+    setUpdateStatus(t("updateChecking"));
+    try {
+      const r = await ipc.updaterCheck();
+      if (r.notes && !r.available) {
+        setUpdateStatus(r.notes);
+        return;
+      }
+      if (!r.available) {
+        setUpdateStatus(t("updateUpToDate"));
+        return;
+      }
+      setUpdateStatus(
+        `${t("updateAvailable")} ${r.version ?? ""}${r.notes ? ` — ${r.notes}` : ""}`.trim(),
+      );
+      setUpdateStatus(t("updateInstalling"));
+      const install = await ipc.updaterDownloadAndInstall();
+      if (install.installed) {
+        setUpdateStatus(install.message ?? t("updateReady"));
+        void useAppStore.getState().refreshNotifications();
+      } else {
+        setUpdateStatus(install.message ?? t("updateUpToDate"));
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setUpdateStatus(`${t("updateFailed")}: ${msg}`);
+      void useAppStore.getState().refreshNotifications();
+    } finally {
+      setUpdateBusy(false);
+    }
   };
 
   return (
@@ -834,17 +880,22 @@ function DiagnosticsSection() {
           {report}
         </pre>
       )}
-      <div style={{ marginTop: 12 }}>
-        <button
-          className="btn"
-          onClick={async () => {
-            const r = await ipc.updaterCheck();
-            if (r.notes) alert(r.notes);
-            else alert(r.available ? `发现新版本 ${r.version}` : "当前已是最新版本");
-          }}
-        >
-          检查更新
-        </button>
+      <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            className="btn"
+            type="button"
+            disabled={updateBusy}
+            onClick={() => void runUpdateCheck()}
+          >
+            {t("checkForUpdates")}
+          </button>
+          {updateStatus && (
+            <span style={{ color: "var(--text-md)", fontSize: "var(--fs-body-small)" }}>
+              {updateStatus}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

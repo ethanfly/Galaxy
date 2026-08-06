@@ -208,6 +208,8 @@ export interface NotificationItem {
   read: boolean;
   projectId?: string | null;
   paneId?: string | null;
+  /** Optional UI action, e.g. `app.relaunch` after silent update install. */
+  action?: string | null;
 }
 
 export interface GitFileChange {
@@ -335,6 +337,8 @@ export interface AppConfig {
   contextMenuEnabled: boolean;
   agentNotifications: boolean;
   triggerNotifications: boolean;
+  /** Check for updates shortly after startup (default true). */
+  autoCheckUpdate: boolean;
   shortcuts: ShortcutBinding[];
   statusbarComponents: string[];
   windowState: WindowStateCfg;
@@ -406,6 +410,12 @@ export interface UpdateInfo {
   available: boolean;
   version?: string | null;
   notes?: string | null;
+}
+
+export interface UpdaterInstallResult {
+  installed: boolean;
+  version?: string | null;
+  message?: string | null;
 }
 
 export interface CmdError {

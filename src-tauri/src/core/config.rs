@@ -32,6 +32,9 @@ pub struct AppConfig {
     pub agent_notifications: bool,
     #[serde(default = "default_true")]
     pub trigger_notifications: bool,
+    /// When true, check for app updates shortly after startup (default on).
+    #[serde(default = "default_true")]
+    pub auto_check_update: bool,
     #[serde(default = "default_shortcuts")]
     pub shortcuts: Vec<ShortcutBinding>,
     #[serde(default = "default_statusbar")]
@@ -164,6 +167,7 @@ impl Default for AppConfig {
             context_menu_enabled: true,
             agent_notifications: true,
             trigger_notifications: true,
+            auto_check_update: true,
             shortcuts: default_shortcuts(),
             statusbar_components: default_statusbar(),
             window_state: WindowState::default(),
@@ -173,6 +177,23 @@ impl Default for AppConfig {
             feature_flags: FeatureFlags::default(),
             hardware_acceleration: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod auto_check_update_tests {
+    use super::*;
+
+    #[test]
+    fn missing_auto_check_update_defaults_to_true() {
+        let json = r#"{"schemaVersion":3,"language":"zh-CN"}"#;
+        let cfg: AppConfig = serde_json::from_str(json).expect("parse");
+        assert!(cfg.auto_check_update);
+    }
+
+    #[test]
+    fn default_config_enables_auto_check_update() {
+        assert!(AppConfig::default().auto_check_update);
     }
 }
 

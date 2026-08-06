@@ -19,6 +19,7 @@ const config: AppConfig = {
   contextMenuEnabled: true,
   agentNotifications: true,
   triggerNotifications: true,
+  autoCheckUpdate: true,
   shortcuts: [],
   statusbarComponents: [],
   windowState: { width: 1200, height: 800, maximized: false },

@@ -63,6 +63,7 @@ async function mockTerminalSession(page: Page, includeHiddenSession = false) {
       contextMenuEnabled: true,
       agentNotifications: true,
       triggerNotifications: true,
+      autoCheckUpdate: true,
       shortcuts: [
         { command: "command.palette", keys: "Ctrl+P", enabled: true },
         { command: "search.find", keys: "Ctrl+F", enabled: true },
@@ -101,6 +102,9 @@ async function mockTerminalSession(page: Page, includeHiddenSession = false) {
       config_get: () => config,
       profiles_list: () => [profile],
       notification_list: () => [],
+      updater_check: () => ({ available: false, notes: "开发构建跳过更新检查" }),
+      updater_download_and_install: () => ({ installed: false, message: "skip" }),
+      app_relaunch: () => undefined,
       system_pending_open_here: () => [],
       workspace_restore: () => 0,
       config_update: (args) => {

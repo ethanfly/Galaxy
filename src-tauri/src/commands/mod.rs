@@ -72,6 +72,8 @@ macro_rules! all_commands {
             crate::commands::system::window_save_state,
             crate::commands::system::boot_info,
             crate::commands::system::updater_check,
+            crate::commands::system::updater_download_and_install,
+            crate::commands::system::app_relaunch,
             crate::commands::system::context_menu_set,
         ]
     };

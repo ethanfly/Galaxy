@@ -64,6 +64,8 @@ pub struct AppState {
     /// Generation token for deferred multi-session PTY restore. Bumped to
     /// cancel any in-flight background restore (e.g. crash clean-start).
     pub restore_generation: AtomicU64,
+    /// Single-flight guard for updater download/install.
+    pub update_in_flight: AtomicBool,
 }
 
 /// Whether a deferred restore task should keep spawning panes.
@@ -138,6 +140,18 @@ impl AppState {
         project_id: Option<&str>,
         system: bool,
     ) -> NotificationItem {
+        self.add_notification_ex(title, body, pane_id, project_id, system, None)
+    }
+
+    pub fn add_notification_ex(
+        &self,
+        title: &str,
+        body: &str,
+        pane_id: Option<&str>,
+        project_id: Option<&str>,
+        system: bool,
+        action: Option<&str>,
+    ) -> NotificationItem {
         let item = NotificationItem {
             id: new_id(),
             at: now_rfc3339(),
@@ -146,6 +160,7 @@ impl AppState {
             read: false,
             project_id: project_id.map(String::from),
             pane_id: pane_id.map(String::from),
+            action: action.map(String::from),
         };
         {
             let mut guard = NOTIFICATIONS.lock();
@@ -496,6 +511,7 @@ pub fn build_state(app: AppHandle) -> Result<BuiltState, AppError> {
         recovered_from_crash: AtomicBool::new(had_crash),
         read_only: AtomicBool::new(false),
         restore_generation: AtomicU64::new(0),
+        update_in_flight: AtomicBool::new(false),
     });
 
     let sink: Arc<dyn PtyEventSink> = Arc::new(Sink {

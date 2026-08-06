@@ -339,18 +339,180 @@ pub struct UpdateInfo {
     pub notes: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdaterInstallResult {
+    pub installed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
 #[tauri::command]
-pub async fn updater_check(_state: State<'_, Arc<AppState>>) -> CmdResult<UpdateInfo> {
-    // The updater plugin is configured in production builds. In dev we report
-    // "no update" so the settings page stays functional.
-    #[cfg(not(debug_assertions))]
-    {
-        Ok(UpdateInfo { available: false, version: None, notes: None })
-    }
+pub async fn updater_check(
+    app: tauri::AppHandle,
+    _state: State<'_, Arc<AppState>>,
+) -> CmdResult<UpdateInfo> {
     #[cfg(debug_assertions)]
     {
-        Ok(UpdateInfo { available: false, version: None, notes: Some("开发构建跳过更新检查".into()) })
+        let _ = app;
+        return Ok(UpdateInfo {
+            available: false,
+            version: None,
+            notes: Some("开发构建跳过更新检查".into()),
+        });
     }
+    #[cfg(not(debug_assertions))]
+    {
+        check_for_update(&app).await
+    }
+}
+
+/// Re-check, download, and install quietly. Posts in-app notifications.
+/// Does not relaunch — caller/user invokes `app_relaunch`.
+#[tauri::command]
+pub async fn updater_download_and_install(
+    app: tauri::AppHandle,
+    state: State<'_, Arc<AppState>>,
+) -> CmdResult<UpdaterInstallResult> {
+    #[cfg(debug_assertions)]
+    {
+        let _ = app;
+        let _ = state;
+        return Ok(UpdaterInstallResult {
+            installed: false,
+            version: None,
+            message: Some("开发构建无法安装更新".into()),
+        });
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        download_and_install_update(&app, &state).await
+    }
+}
+
+#[tauri::command]
+pub async fn app_relaunch(app: tauri::AppHandle) -> CmdResult<()> {
+    // Process plugin registers restart; AppHandle::request_restart is provided by Tauri.
+    app.restart();
+    #[allow(unreachable_code)]
+    Ok(())
+}
+
+#[cfg(not(debug_assertions))]
+async fn check_for_update(app: &tauri::AppHandle) -> CmdResult<UpdateInfo> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = match app.updater() {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::debug!("updater unavailable: {e}");
+            return Ok(UpdateInfo {
+                available: false,
+                version: None,
+                notes: Some("更新服务未启用".into()),
+            });
+        }
+    };
+    match updater.check().await {
+        Ok(Some(update)) => Ok(UpdateInfo {
+            available: true,
+            version: Some(update.version),
+            notes: update.body,
+        }),
+        Ok(None) => Ok(UpdateInfo {
+            available: false,
+            version: None,
+            notes: None,
+        }),
+        Err(e) => {
+            tracing::warn!("updater check failed: {e}");
+            Err(CmdError::new(
+                "UPDATER",
+                format!("检查更新失败: {e}"),
+            ))
+        }
+    }
+}
+
+#[cfg(not(debug_assertions))]
+async fn download_and_install_update(
+    app: &tauri::AppHandle,
+    state: &AppState,
+) -> CmdResult<UpdaterInstallResult> {
+    use std::sync::atomic::Ordering;
+    use tauri_plugin_updater::UpdaterExt;
+
+    if state
+        .update_in_flight
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return Err(CmdError::new("UPDATER_BUSY", "已有更新任务进行中"));
+    }
+
+    let result = async {
+        let updater = app.updater().map_err(|e| {
+            CmdError::new("UPDATER_DISABLED", format!("更新服务未启用: {e}"))
+        })?;
+        let update = match updater.check().await {
+            Ok(Some(u)) => u,
+            Ok(None) => {
+                return Ok(UpdaterInstallResult {
+                    installed: false,
+                    version: None,
+                    message: Some("当前已是最新版本".into()),
+                });
+            }
+            Err(e) => {
+                return Err(CmdError::new("UPDATER", format!("检查更新失败: {e}")));
+            }
+        };
+        let version = update.version.clone();
+        let notes = update.body.clone().unwrap_or_default();
+        let body = if notes.is_empty() {
+            format!("正在后台下载并安装 v{version}…")
+        } else {
+            format!("正在后台下载并安装 v{version}\n{notes}")
+        };
+        state.add_notification("发现新版本", &body, None, None, false);
+
+        match update
+            .download_and_install(|_chunk, _total| {}, || {})
+            .await
+        {
+            Ok(()) => {
+                state.add_notification_ex(
+                    "更新已就绪",
+                    &format!("v{version} 已安装，重启后生效"),
+                    None,
+                    None,
+                    true,
+                    Some("app.relaunch"),
+                );
+                Ok(UpdaterInstallResult {
+                    installed: true,
+                    version: Some(version),
+                    message: Some("安装完成，重启后生效".into()),
+                })
+            }
+            Err(e) => {
+                tracing::warn!("updater install failed: {e}");
+                state.add_notification(
+                    "更新失败",
+                    &format!("无法安装 v{version}，可稍后在设置中重试"),
+                    None,
+                    None,
+                    false,
+                );
+                Err(CmdError::new("UPDATER", format!("安装更新失败: {e}")))
+            }
+        }
+    }
+    .await;
+
+    state.update_in_flight.store(false, Ordering::SeqCst);
+    result
 }
 
 // ---------------------------------------------------------------- context menu

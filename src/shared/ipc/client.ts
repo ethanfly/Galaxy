@@ -25,6 +25,7 @@ import type {
   SplitDirection,
   TemplateNode,
   UpdateInfo,
+  UpdaterInstallResult,
   WindowStateCfg,
   AgentScanResult,
 } from "./types";
@@ -189,6 +190,9 @@ export const windowSaveState = (windowState: WindowStateCfg) =>
   call<void>("window_save_state", { windowState });
 export const bootInfo = () => call<BootInfo>("boot_info");
 export const updaterCheck = () => call<UpdateInfo>("updater_check");
+export const updaterDownloadAndInstall = () =>
+  call<UpdaterInstallResult>("updater_download_and_install");
+export const appRelaunch = () => call<void>("app_relaunch");
 export const contextMenuSet = (enabled: boolean) =>
   call<void>("context_menu_set", { enabled });
 

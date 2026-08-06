@@ -66,6 +66,7 @@ const ipcMocks = vi.hoisted(() => {
       contextMenuEnabled: true,
       agentNotifications: true,
       triggerNotifications: true,
+      autoCheckUpdate: true,
       hardwareAcceleration: true,
     })),
     profilesList,

@@ -17,7 +17,7 @@ async function mockInsightsApp(page: Page) {
     const config = {
       schemaVersion: 3, language: "zh-CN", terminalFontSize: 14, uiFontSize: 13,
       theme: "dark", customProfiles: [], globalHotkey: null, contextMenuEnabled: true,
-      agentNotifications: true, triggerNotifications: true, shortcuts: [],
+      agentNotifications: true, triggerNotifications: true, autoCheckUpdate: true, shortcuts: [],
       statusbarComponents: ["sessions", "notifications", "clock"],
       windowState: { width: 1440, height: 900, maximized: false },
       layoutTemplates: [], workflows: [], triggers: [], hardwareAcceleration: true,

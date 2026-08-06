@@ -18,7 +18,7 @@ import { MovePaneModal } from "./features/terminal/MovePaneModal";
 import { InsightsView } from "./features/insights/InsightsView";
 
 import { onAgentStatus, onOpenHere, onPtyExit, onPtyOutput, onRecoveryAvailable, onSessionTitle, onTriggerFire, onNotification, onGitChanged, onStoreChanged } from "./shared/ipc/events";
-import { ptyResize } from "./shared/ipc/client";
+import { ptyResize, updaterCheck, updaterDownloadAndInstall } from "./shared/ipc/client";
 import { useAppStore } from "./shared/stores/appStore";
 import { refitAllTerminals, useTerminalStore } from "./shared/stores/terminalStore";
 import { useUiStore } from "./shared/stores/uiStore";
@@ -141,6 +141,32 @@ export default function App() {
       unlisteners.forEach((u) => u());
     };
   }, [ingest]);
+
+  // Auto-update: after UI is ready, optionally check once per process (default on).
+  useEffect(() => {
+    if (loadState !== "ready") return;
+    const config = useAppStore.getState().config;
+    if (config?.autoCheckUpdate === false) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const info = await updaterCheck();
+          if (cancelled || !info.available) return;
+          await updaterDownloadAndInstall();
+          if (!cancelled) void useAppStore.getState().refreshNotifications();
+        } catch (err) {
+          // Never block the app on updater failures.
+          console.warn("auto update check failed", err);
+          if (!cancelled) void useAppStore.getState().refreshNotifications();
+        }
+      })();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [loadState]);
 
   // Drain queued --open-here paths after init (cold start only).
   useEffect(() => {
