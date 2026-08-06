@@ -437,6 +437,41 @@ test("directional pane focus ignores terminals in hidden sessions", async ({ pag
   await expect(visiblePane).toHaveClass(/focused/);
 });
 
+test("inactive session surfaces are inert and active ones stay hit-testable", async ({ page }) => {
+  await mockTerminalSession(page, true);
+  await page.goto("/");
+  await expect(page.locator(".session-surface")).toHaveCount(2);
+
+  const active = page.locator(".session-surface.active");
+  const inactive = page.locator(".session-surface.inactive");
+  await expect(active).toHaveCount(1);
+  await expect(inactive).toHaveCount(1);
+  await expect(active).toHaveAttribute("data-session-id", "session-ime");
+  await expect
+    .poll(async () =>
+      inactive.evaluate((el) => (el as HTMLElement & { inert?: boolean }).inert === true),
+    )
+    .toBe(true);
+  await expect
+    .poll(async () =>
+      active.evaluate((el) => (el as HTMLElement & { inert?: boolean }).inert === true),
+    )
+    .toBe(false);
+
+  await page.locator(".tabbar [role=tab]").nth(1).click();
+  await expect(page.locator(".session-surface.active")).toHaveAttribute(
+    "data-session-id",
+    "session-ime-hidden",
+  );
+  await expect
+    .poll(async () =>
+      page
+        .locator('.session-surface[data-session-id="session-ime"]')
+        .evaluate((el) => (el as HTMLElement & { inert?: boolean }).inert === true),
+    )
+    .toBe(true);
+});
+
 test("switching tabs restores focus to that session's terminal", async ({ page }) => {
   await mockTerminalSession(page, true);
   await page.goto("/");

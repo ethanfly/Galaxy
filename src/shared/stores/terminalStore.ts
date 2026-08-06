@@ -11,6 +11,12 @@ export interface TerminalHandle {
   write(data: string, seq: number, generation: number): void;
   replay(chunks: PaneChunk[]): void;
   truncatedNotice(): void;
+  /**
+   * Re-measure the host, sync xterm cell metrics, and return new cols/rows
+   * when they change (caller should ptyResize). Returns null if unchanged
+   * or the host is collapsed / not ready.
+   */
+  refitMetrics(): { cols: number; rows: number } | null;
 }
 
 // Non-reactive registry of live terminal instances.
@@ -29,6 +35,20 @@ export function unregisterTerminal(paneId: string, handle?: TerminalHandle) {
 }
 export function terminalFor(paneId: string): TerminalHandle | undefined {
   return registry.get(paneId);
+}
+
+/** Re-fit every mounted terminal (DPR / OS scale changes). */
+export function refitAllTerminals(
+  onResize?: (paneId: string, cols: number, rows: number) => void,
+): void {
+  for (const handle of registry.values()) {
+    try {
+      const next = handle.refitMetrics();
+      if (next && onResize) onResize(handle.paneId, next.cols, next.rows);
+    } catch {
+      /* host mid-teardown */
+    }
+  }
 }
 
 interface PaneDeliveryState {

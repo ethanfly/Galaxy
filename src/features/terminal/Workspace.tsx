@@ -1,7 +1,7 @@
 // Layout-tree driven workspace: recursive split containers, draggable
 // dividers (weights only — terminals are never rebuilt), pane chrome with
 // split/close/move/sync actions.
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type HTMLAttributes } from "react";
 
 import {
   IconClose,
@@ -57,6 +57,8 @@ export function Workspace() {
             data-session-id={session.id}
             className={`session-surface ${active ? "active" : "inactive"}`}
             aria-hidden={!active}
+            // Prevent focus / hit-test leakage into stacked inactive sessions.
+            {...(!active ? ({ inert: "" } as HTMLAttributes<HTMLDivElement>) : {})}
           >
             <LayoutRenderer node={session.layout} session={session} path={[]} />
           </div>

@@ -18,10 +18,12 @@ import { MovePaneModal } from "./features/terminal/MovePaneModal";
 import { InsightsView } from "./features/insights/InsightsView";
 
 import { onAgentStatus, onOpenHere, onPtyExit, onPtyOutput, onRecoveryAvailable, onSessionTitle, onTriggerFire, onNotification, onGitChanged, onStoreChanged } from "./shared/ipc/events";
+import { ptyResize } from "./shared/ipc/client";
 import { useAppStore } from "./shared/stores/appStore";
-import { useTerminalStore } from "./shared/stores/terminalStore";
+import { refitAllTerminals, useTerminalStore } from "./shared/stores/terminalStore";
 import { useUiStore } from "./shared/stores/uiStore";
 import { DEFAULT_APPEARANCE } from "./shared/appearance";
+import { subscribeDevicePixelRatio } from "./shared/dpr";
 import { useShortcuts } from "./features/shortcuts/useShortcuts";
 import { t } from "./shared/i18n";
 import { IconAlert } from "./shared/icons/Icons";
@@ -42,6 +44,16 @@ export default function App() {
   useLayoutEffect(() => {
     document.documentElement.style.setProperty("--ui-font-size", `${uiFontSize}px`);
   }, [uiFontSize]);
+
+  // OS display scale / multi-monitor DPR changes → re-fit all terminals so
+  // TUI mouse cell metrics stay correct (spec 2026-08-06).
+  useEffect(() => {
+    return subscribeDevicePixelRatio(() => {
+      refitAllTerminals((paneId, cols, rows) => {
+        void ptyResize(paneId, cols, rows);
+      });
+    });
+  }, []);
 
   useEffect(() => {
     void init();

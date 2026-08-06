@@ -221,6 +221,23 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       term.write(data, () => recordRenderedOutput(generation, seq));
     };
 
+    const refitMetrics = (): { cols: number; rows: number } | null => {
+      if (!inputAlive) return null;
+      if (host.clientWidth < 1 || host.clientHeight < 1) return null;
+      try {
+        const before = `${term.cols}x${term.rows}`;
+        fit.fit();
+        // Keep render-service cell size aligned with input mapping (TUI mouse).
+        if (term.rows > 0) term.refresh(0, term.rows - 1);
+        if (`${term.cols}x${term.rows}` !== before) {
+          return { cols: term.cols, rows: term.rows };
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    };
+
     // Register replay/write surface for the batching pipeline. The sequence
     // advances only from xterm's parsed-write callback, never on IPC receipt.
     const handle = {
@@ -229,6 +246,7 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       replay: (chunks: { data: string; seq: number; generation: number }[]) =>
         chunks.forEach((chunk) => writeOutput(chunk.data, chunk.seq, chunk.generation)),
       truncatedNotice: () => term.write(`\r\n\x1b[33m${t("truncatedNotice")}\x1b[0m\r\n`),
+      refitMetrics,
     };
     registerTerminal(handle);
 
@@ -344,10 +362,12 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       const fit = fitRef.current;
       // Always re-measure when the session is shown — host may have been
       // display:none historically, or the window resized while inactive.
+      // refresh() is required so TUI mouse coords match the live cell size.
       if (host && term && fit && host.clientWidth >= 1 && host.clientHeight >= 1) {
         try {
           const before = `${term.cols}x${term.rows}`;
           fit.fit();
+          if (term.rows > 0) term.refresh(0, term.rows - 1);
           if (`${term.cols}x${term.rows}` !== before) {
             void ptyResize(pane.id, term.cols, term.rows);
           }

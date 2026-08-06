@@ -98,6 +98,9 @@ pub struct ShortcutBinding {
     pub enabled: bool,
 }
 
+/// Outer window geometry in **logical DIPs** (not physical pixels).
+/// Capture/apply convert via the window scale factor so OS display scaling
+/// does not silently shrink or enlarge the restored window (spec 2026-08-06).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowState {

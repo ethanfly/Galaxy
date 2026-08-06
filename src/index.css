@@ -39,12 +39,14 @@
   --status-blocked: #f2bd65;
   --status-error: #ff667f;
 
-  /* metrics — fixed toolbar/tab/pane/statusbar sizes (no layout jumps) */
-  --h-titlebar: 36px;
-  --h-tabbar: 38px;
-  --h-statusbar: 26px;
-  --w-sidebar: 232px;
-  --w-panel: 340px;
+  /* metrics — rem density (13px root baseline); scales with --ui-font-size + OS DIP */
+  --h-titlebar: 2.7692rem;   /* 36/13 */
+  --h-tabbar: 2.9231rem;     /* 38/13 */
+  --h-statusbar: 2rem;       /* 26/13 */
+  --w-sidebar: 17.8462rem;   /* 232/13 */
+  --w-panel: 26.1538rem;     /* 340/13 */
+  --size-icon-btn: 2.1538rem; /* 28/13 */
+  --size-rail-btn: 2.9231rem; /* 38/13 */
 
   /* type */
   --font-ui: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
@@ -158,8 +160,8 @@ body, #root {
 }
 .titlebar-tool {
   position: relative;
-  width: 28px;
-  height: 28px;
+  width: var(--size-icon-btn);
+  height: var(--size-icon-btn);
   border-radius: 3px;
   color: var(--text-lo);
   font-size: var(--fs-ui);
@@ -171,10 +173,10 @@ body, #root {
   box-shadow: inset 0 0 0 1px var(--accent-border);
 }
 /* Settings is a primary discoverable control — label + icon, not a tiny glyph.
-   Must beat later `.icon-btn { width: 28px }` (same single-class specificity). */
+   Must beat later `.icon-btn { width: var(--size-icon-btn) }` specificity. */
 .titlebar .icon-btn.titlebar-settings {
   width: auto;
-  min-width: 28px;
+  min-width: var(--size-icon-btn);
   padding: 0 8px;
   gap: 5px;
   color: var(--text-md);
@@ -431,7 +433,7 @@ body, #root {
   justify-content: center;
   gap: 2px;
   /* Match the icon-button row against the panel seam. */
-  width: 38px;
+  width: var(--size-rail-btn);
   flex: none;
   padding: 0;
   border-left: 1px solid var(--border-subtle);
@@ -473,10 +475,10 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  min-height: 28px;
+  width: var(--size-icon-btn);
+  height: var(--size-icon-btn);
+  min-width: var(--size-icon-btn);
+  min-height: var(--size-icon-btn);
   border: 0;
   border-radius: 3px;
   background: transparent;
@@ -560,6 +562,12 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
   min-height: 0;
   display: flex;
   flex-direction: column;
+  position: relative;
+  z-index: 0;
+}
+/* Active session stays on top for unambiguous TUI mouse hit-testing. */
+.session-surface.active {
+  z-index: 1;
 }
 .session-surface.inactive {
   visibility: hidden;
@@ -685,8 +693,8 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
 }
 .panel-tabs .panel-close {
   flex: none;
-  width: 28px;
-  height: 28px;
+  width: var(--size-icon-btn);
+  height: var(--size-icon-btn);
   margin: 1px 2px 0;
   border-radius: 3px;
   color: var(--text-lo);
@@ -1143,7 +1151,7 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
 .statusbar { grid-area: statusbar; }
 
 .navigation-rail {
-  width: 56px;
+  width: 4.3077rem; /* 56/13 */
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1161,8 +1169,8 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
   gap: 3px;
 }
 .rail-button {
-  width: 38px;
-  height: 38px;
+  width: var(--size-rail-btn);
+  height: var(--size-rail-btn);
   display: grid;
   place-items: center;
   border: 0;
@@ -1185,7 +1193,7 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
 .rail-settings { flex: none; }
 
 .context-sidebar {
-  width: 220px;
+  width: 16.9231rem; /* 220/13 — density-scaled; independent of --w-sidebar token */
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -1194,7 +1202,7 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
   overflow: hidden;
 }
 .context-header {
-  height: 34px;
+  height: 2.6154rem; /* 34/13 */
   padding: 0 9px 0 12px;
   display: flex;
   align-items: center;
@@ -1256,27 +1264,33 @@ input[type="checkbox"] { accent-color: var(--accent-deep); width: 14px; height: 
 .workspace-switcher {
   display: flex;
   align-self: center;
-  min-height: max(26px, calc(1em + 8px));
-  padding: 2px;
+  align-items: stretch;
+  min-height: max(1.5rem, calc(1em + 0.65rem));
+  padding: 0.15rem;
   border-radius: 4px;
   background: var(--space-3);
   -webkit-app-region: no-drag;
 }
 .workspace-switcher button {
-  min-width: 56px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 4.3077rem; /* 56/13 */
+  padding: 0.2em 0.55em;
   border: 0;
   border-radius: 3px;
   background: transparent;
   color: var(--text-lo);
   font: inherit;
   font-size: var(--fs-body-small);
-  line-height: 1;
+  line-height: 1.15;
   cursor: pointer;
+  overflow: hidden;
 }
 .workspace-switcher button.active { background: var(--accent-surface); color: var(--accent-soft); }
 
 @media (max-width: 1279px) {
-  .app-shell { grid-template-columns: 56px auto minmax(0, 1fr); }
+  .app-shell { grid-template-columns: 4.3077rem auto minmax(0, 1fr); }
   .right-panel {
     position: fixed;
     top: var(--h-titlebar);

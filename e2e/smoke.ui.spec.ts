@@ -272,6 +272,9 @@ test.describe("app shell", () => {
     const fontSize = async (locator: (typeof samples)[number]) =>
       Number.parseFloat(await locator.evaluate((element) => getComputedStyle(element).fontSize));
     const before = await Promise.all(samples.map(fontSize));
+    const titlebarHeightBefore = await page
+      .locator(".titlebar")
+      .evaluate((el) => el.getBoundingClientRect().height);
 
     await page.getByRole("spinbutton").nth(1).fill("18");
     await expect(page.locator(":root")).toHaveCSS("font-size", "18px");
@@ -279,6 +282,11 @@ test.describe("app shell", () => {
     for (let index = 0; index < samples.length; index += 1) {
       expect(preview[index] / before[index]).toBeCloseTo(18 / 13, 2);
     }
+    // Shell chrome density tokens are rem-based and scale with uiFontSize.
+    const titlebarHeightPreview = await page
+      .locator(".titlebar")
+      .evaluate((el) => el.getBoundingClientRect().height);
+    expect(titlebarHeightPreview / titlebarHeightBefore).toBeCloseTo(18 / 13, 2);
 
     await page.getByRole("button", { name: "取消" }).click();
     await expect(page.locator(":root")).toHaveCSS("font-size", "13px");

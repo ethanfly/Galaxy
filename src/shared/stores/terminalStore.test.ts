@@ -2,16 +2,33 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   registerTerminal,
+  refitAllTerminals,
   unregisterTerminal,
   useTerminalStore,
+  type TerminalHandle,
 } from "./terminalStore";
 import type { PaneChunk } from "../ipc/types";
 
-// ptyReplay is mocked — sequence-gap replays go through the ring buffer API.
+// ptyReplay is mocked �?sequence-gap replays go through the ring buffer API.
 const { ptyReplayMock } = vi.hoisted(() => ({
   ptyReplayMock: vi.fn(),
 }));
 vi.mock("../ipc/client", () => ({ ptyReplay: ptyReplayMock }));
+
+function mockHandle(
+  paneId: string,
+  write: TerminalHandle["write"] = vi.fn(),
+  extras: Partial<TerminalHandle> = {},
+): TerminalHandle {
+  return {
+    paneId,
+    write,
+    replay: () => {},
+    truncatedNotice: () => {},
+    refitMetrics: () => null,
+    ...extras,
+  };
+}
 
 function reset() {
   useTerminalStore.getState().resetPane("p1");
@@ -40,12 +57,7 @@ describe("terminalStore seq tracking", () => {
 
   it("writes ordered chunks and tracks lastSeq", () => {
     const write = vi.fn();
-    registerTerminal({
-      paneId: "p1",
-      write,
-      replay: () => {},
-      truncatedNotice: () => {},
-    });
+    registerTerminal(mockHandle("p1", write));
     useTerminalStore.getState().ingest([
       { paneId: "p1", generation: 1, seq: 1, data: "a" },
       { paneId: "p1", generation: 1, seq: 2, data: "b" },
@@ -67,12 +79,7 @@ describe("terminalStore seq tracking", () => {
     ]);
 
     expect(useTerminalStore.getState().lastSeq.p1).toBeUndefined();
-    registerTerminal({
-      paneId: "p1",
-      write,
-      replay: () => {},
-      truncatedNotice: () => {},
-    });
+    registerTerminal(mockHandle("p1", write));
 
     expect(write.mock.calls).toEqual([
       ["early-a", 1, 1],
@@ -84,12 +91,7 @@ describe("terminalStore seq tracking", () => {
 
   it("detects gaps and requests replay without double-writing", async () => {
     const write = vi.fn();
-    registerTerminal({
-      paneId: "p1",
-      write,
-      replay: () => {},
-      truncatedNotice: () => {},
-    });
+    registerTerminal(mockHandle("p1", write));
     useTerminalStore
       .getState()
       .ingest([{ paneId: "p1", generation: 1, seq: 1, data: "a" }]);
@@ -119,12 +121,7 @@ describe("terminalStore seq tracking", () => {
         }),
     );
     const write = vi.fn();
-    registerTerminal({
-      paneId: "p1",
-      write,
-      replay: () => {},
-      truncatedNotice: () => {},
-    });
+    registerTerminal(mockHandle("p1", write));
 
     useTerminalStore
       .getState()
@@ -174,12 +171,7 @@ describe("terminalStore seq tracking", () => {
         }),
     );
     const write = vi.fn();
-    registerTerminal({
-      paneId: "p1",
-      write,
-      replay: () => {},
-      truncatedNotice: () => {},
-    });
+    registerTerminal(mockHandle("p1", write));
 
     useTerminalStore.getState().ingest([
       { paneId: "p1", generation: 1, seq: 1, data: "old-1" },
@@ -247,5 +239,20 @@ describe("terminalStore seq tracking", () => {
     expect(listener.mock.calls[0][0]).toEqual({ kind: "codex", status: "working" });
 
     unsubscribe();
+  });
+
+  it("refitAllTerminals notifies only panes whose metrics changed", () => {
+    const onResize = vi.fn();
+    registerTerminal(
+      mockHandle("p1", vi.fn(), { refitMetrics: () => ({ cols: 120, rows: 40 }) }),
+    );
+    registerTerminal(mockHandle("p2", vi.fn(), { refitMetrics: () => null }));
+
+    refitAllTerminals(onResize);
+
+    expect(onResize).toHaveBeenCalledTimes(1);
+    expect(onResize).toHaveBeenCalledWith("p1", 120, 40);
+    unregisterTerminal("p1");
+    unregisterTerminal("p2");
   });
 });
