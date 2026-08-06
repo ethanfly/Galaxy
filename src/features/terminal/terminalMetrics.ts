@@ -56,17 +56,27 @@ function forceCharMeasure(terminal: TerminalMetricsTarget): void {
 }
 
 /**
- * Re-fire mouse protocol change so xterm rebinds document/element listeners.
- * Matches what happens when an agent exits (sends ?1000l) and re-enters (?1000h).
+ * Tear down and rebind xterm mouse listeners (element + document).
+ *
+ * Self-assigning activeProtocol is NOT enough: onProtocolChange only adds
+ * listeners when requestedEvents.* is null (Terminal.ts). If wheel/move/up
+ * handlers are already registered, VT200→VT200 is a no-op rebind.
+ * Agent exit (?1000l) sets NONE (clears requestedEvents to null); re-enter
+ * (?1000h) restores the protocol and re-adds listeners. Mirror that path.
  */
 export function rebindTerminalMouse(terminal: TerminalMetricsTarget): void {
   const cms = coreOf(terminal)?.coreMouseService;
   if (!cms) return;
   try {
-    // Self-assign forces onProtocolChange (same trick xterm uses at open()).
-    cms.activeProtocol = cms.activeProtocol;
+    const previous = cms.activeProtocol || "NONE";
+    // Always go through NONE so event bits become 0 and handlers are removed
+    // and nullified; then restore so addEventListener runs again.
+    if (previous !== "NONE") {
+      cms.activeProtocol = "NONE";
+    }
+    cms.activeProtocol = previous === "NONE" ? "NONE" : previous;
   } catch {
-    /* ignore */
+    /* unknown protocol name / private API */
   }
 }
 

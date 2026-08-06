@@ -416,13 +416,15 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       className="terminal-host"
       data-pane-id={pane.id}
       style={{ backgroundColor: GALAXY_THEME.background }}
-      onPointerDown={() => {
+      // Capture phase: recover metrics + rebind mouse BEFORE xterm's mousedown
+      // handler maps coords / sends CSI (otherwise the first click after idle
+      // is still dead and only the second click works).
+      onPointerDownCapture={() => {
         // stop-scroll trigger locks viewport permanently until cleared — user
         // interaction implies they want to scroll/click again.
         if (useTerminalStore.getState().scrollLocked[pane.id]) {
           useTerminalStore.getState().setScrollLocked(pane.id, false);
         }
-        // Cheap recovery if cell metrics went stale while the window slept.
         const term = termRef.current;
         const fit = fitRef.current;
         if (term && fit && hostRef.current && hostRef.current.clientWidth >= 1) {
