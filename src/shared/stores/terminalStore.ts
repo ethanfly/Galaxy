@@ -25,6 +25,18 @@ export function registerTerminal(handle: TerminalHandle) {
   registry.set(handle.paneId, handle);
   const delivery = deliveries.get(handle.paneId);
   if (!delivery) return;
+  // Hydration already in flight (e.g. StrictMode re-register): its completion
+  // flushes buffered live output and arms gap recovery.
+  if (delivery.hydrating) return;
+  // A pane that already has committed history but is registering a terminal
+  // instance is a remount (split / move / pane re-created). The fresh xterm
+  // has not seen the output that rebuilt the previous instance — including TUI
+  // state such as the agent's DEC mouse modes and alternate screen — so the
+  // mouse silently dies. Rehydrate from the ring before live delivery.
+  if (delivery.committedSeq > 0) {
+    hydrateFromRing(handle.paneId, delivery);
+    return;
+  }
   flushContiguous(handle.paneId, delivery);
   startGapRecovery(handle.paneId, delivery);
 }
@@ -56,6 +68,9 @@ interface PaneDeliveryState {
   committedSeq: number;
   buffered: Map<number, PaneChunk>;
   recovering: boolean;
+  /** Set while a recreated terminal is being rehydrated from the ring. Live
+   * delivery is deferred until the history replay lands so ordering holds. */
+  hydrating?: boolean;
 }
 
 // Gap recovery is pane-scoped and non-reactive. Later live chunks stay here
@@ -171,6 +186,9 @@ function enqueueChunk(chunk: PaneChunk) {
 }
 
 function flushContiguous(paneId: string, delivery: PaneDeliveryState) {
+  // While a recreated terminal is being rehydrated, live chunks must wait so
+  // history lands first; hydration's completion flushes whatever buffered.
+  if (delivery.hydrating) return;
   const terminal = terminalFor(paneId);
   if (!terminal) return;
   let advanced = false;
@@ -243,6 +261,57 @@ function startGapRecovery(paneId: string, delivery: PaneDeliveryState) {
       }
     } finally {
       if (deliveries.get(paneId) === delivery) delivery.recovering = false;
+    }
+  })();
+}
+
+/**
+ * Rebuild a re-created terminal from the ring buffer.
+ *
+ * Splitting, moving a pane to another session, or any remount builds a fresh
+ * xterm instance that never received the pane's earlier output. Without the
+ * history the screen is blank and — critically — TUI state the agent enabled
+ * early (DEC mouse tracking, alternate screen, bracketed paste) is gone, so
+ * mouse reports stop even though the agent still expects them. Replay the
+ * ring in sequence order, then release the deferred live output.
+ */
+function hydrateFromRing(paneId: string, delivery: PaneDeliveryState) {
+  delivery.hydrating = true;
+  void (async () => {
+    try {
+      let replay;
+      try {
+        replay = await ptyReplay(paneId, 0, delivery.generation);
+      } catch {
+        return;
+      }
+      // The pane restarted (generation changed) or was reset mid-flight.
+      if (deliveries.get(paneId) !== delivery) return;
+      const terminal = terminalFor(paneId);
+      if (!terminal) return;
+
+      if (replay.truncated) terminal.truncatedNotice();
+      const sorted = [...replay.chunks]
+        .filter((chunk) => chunk.generation === delivery.generation)
+        .sort((a, b) => a.seq - b.seq);
+      if (sorted.length > 0) terminal.replay(sorted);
+
+      const maxSeq = sorted.reduce((max, chunk) => Math.max(max, chunk.seq), 0);
+      if (maxSeq > delivery.committedSeq) delivery.committedSeq = maxSeq;
+      // Drop buffered live chunks the replay already covered so they are not
+      // written twice; anything newer still flushes below.
+      for (const seq of [...delivery.buffered.keys()]) {
+        if (seq <= delivery.committedSeq) delivery.buffered.delete(seq);
+      }
+      useTerminalStore.setState((state) => ({
+        lastSeq: { ...state.lastSeq, [paneId]: delivery.committedSeq },
+      }));
+    } finally {
+      if (deliveries.get(paneId) === delivery) {
+        delivery.hydrating = false;
+        flushContiguous(paneId, delivery);
+        startGapRecovery(paneId, delivery);
+      }
     }
   })();
 }

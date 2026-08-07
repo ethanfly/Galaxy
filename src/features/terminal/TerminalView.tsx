@@ -30,12 +30,20 @@ import { applyTerminalFontSize, terminalOptions } from "./terminalAppearance";
 import { installTerminalClipboard } from "./terminalClipboard";
 import { enforceNonBlinkingCursor } from "./terminalCursor";
 import { createAgentScreenObserver, readAgentScreen } from "./agentScreenObserver";
-import { recoverTerminalMetrics, suspendTerminalImeRepositioning } from "./terminalMetrics";
+import {
+  isTerminalMouseBroken,
+  recoverTerminalMetrics,
+  suspendTerminalImeRepositioning,
+} from "./terminalMetrics";
 import { attachTerminalUserInput, binaryStringToBytes } from "./terminalInput";
+import { createSyncOutputGate } from "./syncOutput";
+import { installTerminalDiagnostics } from "./terminalDiag";
 
 export const searchAddons = new Map<string, SearchAddon>();
 export const terminals = new Map<string, Terminal>();
 const IDLE_DEEP_RECOVERY_MS = 20_000;
+
+installTerminalDiagnostics(terminals);
 
 export function TerminalView({ pane, session }: { pane: Pane; session: Session }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -280,6 +288,16 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       term.write(data, () => finishRenderedOutput(generation, seq));
     };
 
+    // DEC 2026 synchronized output: agent TUIs (Codex/Grok) wrap every redraw
+    // in CSI ?2026h … CSI ?2026l and expect the frame to render atomically.
+    // xterm 5.5 ignores the markers and ConPTY splits frames across batches, so
+    // without this gate xterm paints mid-frame states — the cursor sweeping the
+    // working line / header / input box and DECTCEM hide/show flicker. The gate
+    // holds each block and flushes it as a single write (one parse, one render).
+    const syncGate = createSyncOutputGate((data, seq, generation) =>
+      writeOutput(data, seq, generation),
+    );
+
     const refitMetrics = (): { cols: number; rows: number } | null => {
       if (!inputAlive) return null;
       if (host.clientWidth < 1 || host.clientHeight < 1) return null;
@@ -302,13 +320,18 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     // advances only from xterm's parsed-write callback, never on IPC receipt.
     const handle = {
       paneId: pane.id,
-      write: writeOutput,
+      write: (data: string, seq: number, generation: number) =>
+        syncGate.push({ data, seq, generation }),
       replay: (chunks: { data: string; seq: number; generation: number }[]) =>
-        chunks.forEach((chunk) => writeOutput(chunk.data, chunk.seq, chunk.generation)),
-      truncatedNotice: () =>
+        chunks.forEach((chunk) => syncGate.push(chunk)),
+      truncatedNotice: () => {
+        // Release any held sync frame first so the notice cannot jump ahead of
+        // buffered output.
+        syncGate.flushAll();
         term.write(`\r\n\x1b[33m${t("truncatedNotice")}\x1b[0m\r\n`, () =>
           enforceNonBlinkingCursor(term),
-        ),
+        );
+      },
       refitMetrics,
     };
     registerTerminal(handle);
@@ -388,7 +411,13 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     };
     const onWheelRecover = () => {
       const now = Date.now();
-      if (now - lastTerminalActivityAt >= IDLE_DEEP_RECOVERY_MS) {
+      // Deep-recover on idle, or immediately when the mouse pipeline is broken.
+      // A broken-but-active pane keeps bumping lastTerminalActivityAt, so the
+      // idle threshold alone would never fire and the pane would stay dead.
+      if (
+        now - lastTerminalActivityAt >= IDLE_DEEP_RECOVERY_MS ||
+        isTerminalMouseBroken(term)
+      ) {
         runRecover(true);
       }
       lastTerminalActivityAt = now;
@@ -442,6 +471,8 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       }
       cancelAnimationFrame(initialFit);
       if (healTimer != null) window.clearInterval(healTimer);
+      syncGate.flushAll();
+      syncGate.dispose();
       host.removeEventListener("pointerdown", onPointerRecover, true);
       host.removeEventListener("wheel", onWheelRecover, true);
       ro.disconnect();
