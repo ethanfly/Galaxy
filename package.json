@@ -1,7 +1,7 @@
 {
   "name": "galaxy-terminal",
   "private": true,
-  "version": "0.1.30",
+  "version": "0.1.31",
   "description": "Galaxy Terminal — commercial multi-terminal workspace for developers and multi-agent workflows",
   "type": "module",
   "scripts": {
