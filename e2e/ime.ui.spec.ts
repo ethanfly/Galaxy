@@ -182,6 +182,19 @@ async function mockTerminalSession(page: Page, includeHiddenSession = false) {
   }, includeHiddenSession);
 }
 
+async function terminalCursorBlink(page: Page, paneId: string): Promise<boolean | undefined> {
+  return page.evaluate(async (id) => {
+    const terminalViewUrl = performance
+      .getEntriesByType("resource")
+      .map((entry) => entry.name)
+      .find((url) => url.includes("/src/features/terminal/TerminalView.tsx"));
+    if (!terminalViewUrl) return undefined;
+    const modulePath = new URL(terminalViewUrl).pathname + new URL(terminalViewUrl).search;
+    const { terminals } = await import(/* @vite-ignore */ modulePath);
+    return terminals.get(id)?.options.cursorBlink;
+  }, paneId);
+}
+
 async function terminalMetrics(page: Page) {
   return page.evaluate(() => {
     const invokes = (
@@ -472,15 +485,14 @@ test("rapid TUI renders do not continuously reposition an active IME", async ({ 
   expect(imeAudit.fontSize).toBe("14px");
   expect(Number.parseFloat(imeAudit.lineHeight)).toBeCloseTo(imeAudit.height, 0);
   await expect(page.locator(".xterm-rows")).toContainText("*");
-  expect(await page.locator(".xterm-cursor").count()).toBeLessThanOrEqual(1);
 });
 
-test("rapid split TUI frames leave only one rendered terminal cursor", async ({ page }) => {
+test("terminal output cannot reactivate cursor blink during rapid split TUI frames", async ({ page }) => {
   await mockTerminalSession(page);
   await page.goto("/");
   await expect(page.locator(".xterm-screen")).toBeVisible();
 
-  const cursorCounts: number[] = [];
+  const cursorBlinkStates: Array<boolean | undefined> = [];
   for (let seq = 1; seq <= 12; seq += 1) {
     await page.evaluate((outputSeq) => {
       (window as unknown as { __emitTauri: (event: string, payload: unknown) => void }).__emitTauri(
@@ -491,17 +503,18 @@ test("rapid split TUI frames leave only one rendered terminal cursor", async ({ 
               paneId: "pane-ime",
               generation: 1,
               seq: outputSeq,
-              data: `\u001b[${2 + (outputSeq % 10)};${4 + outputSeq}H${outputSeq % 10}`,
+              data: `${outputSeq === 1 ? "\u001b[?12h" : ""}\u001b[${2 + (outputSeq % 10)};${4 + outputSeq}H${outputSeq % 10}`,
             },
           ],
         },
       );
     }, seq);
     await page.waitForTimeout(20);
-    cursorCounts.push(await page.locator(".xterm-cursor").count());
+    cursorBlinkStates.push(await terminalCursorBlink(page, "pane-ime"));
   }
 
-  expect(Math.max(...cursorCounts)).toBeLessThanOrEqual(1);
+  expect(cursorBlinkStates).not.toContain(undefined);
+  expect(cursorBlinkStates.every((state) => state === false)).toBe(true);
 });
 
 test("closing a pane during IME composition does not raise a page error", async ({ page }) => {

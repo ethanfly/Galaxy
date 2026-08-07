@@ -28,6 +28,7 @@ import { layoutPanes } from "../../shared/utils";
 import { GALAXY_THEME } from "./terminalTheme";
 import { applyTerminalFontSize, terminalOptions } from "./terminalAppearance";
 import { installTerminalClipboard } from "./terminalClipboard";
+import { enforceNonBlinkingCursor } from "./terminalCursor";
 import { createAgentScreenObserver, readAgentScreen } from "./agentScreenObserver";
 import { recoverTerminalMetrics, suspendTerminalImeRepositioning } from "./terminalMetrics";
 import { attachTerminalUserInput, binaryStringToBytes } from "./terminalInput";
@@ -255,6 +256,10 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       renderedSeq = seq;
       if (agentKnown) screenObserver.schedule();
     };
+    const finishRenderedOutput = (generation: number, seq: number) => {
+      enforceNonBlinkingCursor(term);
+      recordRenderedOutput(generation, seq);
+    };
     const writeOutput = (data: string, seq: number, generation: number) => {
       lastTerminalActivityAt = Date.now();
       if (useTerminalStore.getState().scrollLocked[pane.id]) {
@@ -268,11 +273,11 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
           } catch {
             /* buffer scrolled */
           }
-          recordRenderedOutput(generation, seq);
+          finishRenderedOutput(generation, seq);
         });
         return;
       }
-      term.write(data, () => recordRenderedOutput(generation, seq));
+      term.write(data, () => finishRenderedOutput(generation, seq));
     };
 
     const refitMetrics = (): { cols: number; rows: number } | null => {
@@ -300,7 +305,10 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       write: writeOutput,
       replay: (chunks: { data: string; seq: number; generation: number }[]) =>
         chunks.forEach((chunk) => writeOutput(chunk.data, chunk.seq, chunk.generation)),
-      truncatedNotice: () => term.write(`\r\n\x1b[33m${t("truncatedNotice")}\x1b[0m\r\n`),
+      truncatedNotice: () =>
+        term.write(`\r\n\x1b[33m${t("truncatedNotice")}\x1b[0m\r\n`, () =>
+          enforceNonBlinkingCursor(term),
+        ),
       refitMetrics,
     };
     registerTerminal(handle);
