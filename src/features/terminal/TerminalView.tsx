@@ -29,11 +29,12 @@ import { GALAXY_THEME } from "./terminalTheme";
 import { applyTerminalFontSize, terminalOptions } from "./terminalAppearance";
 import { installTerminalClipboard } from "./terminalClipboard";
 import { createAgentScreenObserver, readAgentScreen } from "./agentScreenObserver";
-import { recoverTerminalMetrics } from "./terminalMetrics";
+import { recoverTerminalMetrics, suspendTerminalImeRepositioning } from "./terminalMetrics";
 import { attachTerminalUserInput, binaryStringToBytes } from "./terminalInput";
 
 export const searchAddons = new Map<string, SearchAddon>();
 export const terminals = new Map<string, Terminal>();
+const IDLE_DEEP_RECOVERY_MS = 20_000;
 
 export function TerminalView({ pane, session }: { pane: Pane; session: Session }) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -69,7 +70,11 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     // xterm's composition handler gets a chance to move it, so resync during
     // capture using the current buffer cursor (upstream xterm.js #5759).
     let imeComposing = false;
+    let restoreImeRepositioning: (() => void) | null = null;
     const syncImeAnchor = () => {
+      if (!imeComposing) {
+        restoreImeRepositioning = suspendTerminalImeRepositioning(term);
+      }
       imeComposing = true;
       const textarea = term.textarea;
       const screen = term.element?.querySelector<HTMLElement>(".xterm-screen");
@@ -98,11 +103,32 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       const composition = term.element?.querySelector<HTMLElement>(".composition-view");
       if (!textarea || !screen || !composition || term.cols < 1 || term.rows < 1) return;
       const buffer = term.buffer.active;
+      const screenRect = screen.getBoundingClientRect();
+      const hostRect = host.getBoundingClientRect();
+      const workspaceRect = host.closest<HTMLElement>(".workspace")?.getBoundingClientRect();
+      const viewportRight = Math.min(
+        window.innerWidth,
+        document.documentElement.clientWidth || window.innerWidth,
+      );
+      const visibleRight = Math.min(
+        hostRect.right,
+        workspaceRect?.right ?? Number.POSITIVE_INFINITY,
+        viewportRight,
+      );
+      const visibleScreenWidth = Math.max(
+        1,
+        Math.min(screen.clientWidth, screenRect.width, visibleRight - screenRect.left),
+      );
       const cellWidth = screen.clientWidth / term.cols;
       const cellHeight = screen.clientHeight / term.rows;
+      const safeCellHeight = Math.max(cellHeight, 1);
       const cursorX = Math.max(0, Math.min(buffer.cursorX, term.cols - 1));
       const cursorY = Math.max(0, Math.min(buffer.cursorY, term.rows - 1));
       const cursorLeft = cursorX * cellWidth;
+      const anchorLeft = Math.max(
+        0,
+        Math.min(cursorLeft, visibleScreenWidth - Math.max(cellWidth, 1)),
+      );
       const top = cursorY * cellHeight;
 
       // The hidden textarea is the native IME candidate-window anchor and
@@ -110,25 +136,31 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       // leftward at the last columns so it remains readable without changing
       // text direction or escaping the terminal viewport.
       composition.style.direction = "";
-      composition.style.maxWidth = `${screen.clientWidth}px`;
+      composition.style.maxWidth = `${visibleScreenWidth}px`;
       composition.style.overflow = "hidden";
       const compositionWidth = Math.min(
         Math.max(composition.scrollWidth, composition.getBoundingClientRect().width, cellWidth),
-        screen.clientWidth,
+        visibleScreenWidth,
       );
       const compositionLeft = Math.max(
         0,
-        Math.min(cursorLeft, screen.clientWidth - compositionWidth),
+        Math.min(anchorLeft, visibleScreenWidth - compositionWidth),
       );
       composition.style.left = `${compositionLeft}px`;
       composition.style.top = `${top}px`;
-      composition.style.maxWidth = `${Math.max(screen.clientWidth - compositionLeft, 1)}px`;
-      textarea.style.left = `${cursorLeft}px`;
+      composition.style.height = `${safeCellHeight}px`;
+      composition.style.lineHeight = `${safeCellHeight}px`;
+      composition.style.fontFamily = term.options.fontFamily ?? "";
+      composition.style.fontSize = `${term.options.fontSize}px`;
+      composition.style.maxWidth = `${Math.max(visibleScreenWidth - compositionLeft, 1)}px`;
+      textarea.style.left = `${anchorLeft}px`;
       textarea.style.top = `${top}px`;
       textarea.style.width = `${Math.min(
         Math.max(textarea.getBoundingClientRect().width, cellWidth, 1),
-        Math.max(screen.clientWidth - cursorLeft, 1),
+        Math.max(visibleScreenWidth - anchorLeft, 1),
       )}px`;
+      textarea.style.height = `${safeCellHeight}px`;
+      textarea.style.lineHeight = `${safeCellHeight}px`;
     };
     const scheduleImeConstraint = () => {
       constrainImeComposition();
@@ -140,16 +172,33 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
         if (imeComposing) constrainImeComposition();
       }, 0);
     };
-    textarea?.addEventListener("compositionupdate", scheduleImeConstraint);
-    const renderSub = term.onRender(() => {
-      if (imeComposing) scheduleImeConstraint();
+    let imeResizeFrame = 0;
+    let imeResizeSettledFrame = 0;
+    const scheduleImeAfterWindowResize = () => {
+      if (!imeComposing) return;
+      cancelAnimationFrame(imeResizeFrame);
+      cancelAnimationFrame(imeResizeSettledFrame);
+      imeResizeFrame = requestAnimationFrame(() => {
+        imeResizeSettledFrame = requestAnimationFrame(scheduleImeConstraint);
+      });
+    };
+    const imeScreen = term.element?.querySelector<HTMLElement>(".xterm-screen");
+    const imeLayoutObserver = new ResizeObserver(() => {
+      if (imeComposing) scheduleImeAfterWindowResize();
     });
+    if (imeScreen) imeLayoutObserver.observe(imeScreen);
+    textarea?.addEventListener("compositionupdate", scheduleImeConstraint);
+    window.addEventListener("resize", scheduleImeAfterWindowResize);
     const finishImeComposition = () => {
       imeComposing = false;
       if (imeConstraintTimer != null) {
         window.clearTimeout(imeConstraintTimer);
         imeConstraintTimer = null;
       }
+      cancelAnimationFrame(imeResizeFrame);
+      cancelAnimationFrame(imeResizeSettledFrame);
+      restoreImeRepositioning?.();
+      restoreImeRepositioning = null;
     };
     textarea?.addEventListener("compositionend", finishImeComposition);
 
@@ -184,6 +233,7 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
         (current && layoutPanes(current.layout).find((item) => item.id === pane.id)?.agentKind),
     );
     let inputAlive = true;
+    let lastTerminalActivityAt = Date.now();
     let renderedGeneration = 0;
     let renderedSeq = 0;
     const screenObserver = createAgentScreenObserver(
@@ -206,6 +256,7 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       if (agentKnown) screenObserver.schedule();
     };
     const writeOutput = (data: string, seq: number, generation: number) => {
+      lastTerminalActivityAt = Date.now();
       if (useTerminalStore.getState().scrollLocked[pane.id]) {
         // stop-scroll trigger action: keep the viewport where the user left
         // it even while output keeps flowing.
@@ -229,7 +280,17 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       if (host.clientWidth < 1 || host.clientHeight < 1) return null;
       // Force char remeasure first — FitAddon no-ops when cell size is 0,
       // which happens after long idle / WebView suspend and kills TUI mouse.
-      return recoverTerminalMetrics(term, fit);
+      return recoverForHost();
+    };
+
+    const hostIsVisible = () =>
+      document.visibilityState !== "hidden" && getComputedStyle(host).visibility !== "hidden";
+    const recoverForHost = (forceRendererRepair = false) => {
+      const visible = hostIsVisible();
+      return recoverTerminalMetrics(term, fit, {
+        forceRendererRepair: forceRendererRepair && visible,
+        allowRendererRepair: visible,
+      });
     };
 
     // Register replay/write surface for the batching pipeline. The sequence
@@ -258,7 +319,7 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
         if (status.status === prev?.status && status.kind === prev?.kind) return;
         if (host.clientWidth < 1 || host.clientHeight < 1) return;
         try {
-          const next = recoverTerminalMetrics(term, fit);
+          const next = recoverForHost();
           if (next) void ptyResize(pane.id, next.cols, next.rows);
         } catch {
           /* mid-teardown */
@@ -270,6 +331,7 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     // onData (text/SGR mouse) + onBinary (DEFAULT mouse as raw bytes).
     const sendTextInput = (data: string) => {
       if (!inputAlive) return;
+      lastTerminalActivityAt = Date.now();
       const sess = useAppStore.getState().sessions.find((s) => s.id === session.id);
       if (sess?.syncInput) {
         void ptyBroadcast(session.id, data);
@@ -279,6 +341,7 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     };
     const sendBinaryInput = (data: string) => {
       if (!inputAlive) return;
+      lastTerminalActivityAt = Date.now();
       // DEFAULT mouse encoding is latin1 bytes; UTF-8 string IPC corrupts it.
       void ptyWriteBytes(pane.id, binaryStringToBytes(data));
     };
@@ -293,11 +356,11 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
     };
     textarea?.addEventListener("focus", handleTerminalFocus);
 
-    const runRecover = () => {
+    const runRecover = (forceRendererRepair = false) => {
       if (!inputAlive) return;
       if (host.clientWidth < 1 || host.clientHeight < 1) return;
       try {
-        const next = recoverTerminalMetrics(term, fit);
+        const next = recoverForHost(forceRendererRepair);
         if (next) void ptyResize(pane.id, next.cols, next.rows);
       } catch {
         /* mid-teardown */
@@ -310,9 +373,20 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       if (useTerminalStore.getState().scrollLocked[pane.id]) {
         useTerminalStore.getState().setScrollLocked(pane.id, false);
       }
-      runRecover();
+      const now = Date.now();
+      const forceRendererRepair = now - lastTerminalActivityAt >= IDLE_DEEP_RECOVERY_MS;
+      lastTerminalActivityAt = now;
+      runRecover(forceRendererRepair);
+    };
+    const onWheelRecover = () => {
+      const now = Date.now();
+      if (now - lastTerminalActivityAt >= IDLE_DEEP_RECOVERY_MS) {
+        runRecover(true);
+      }
+      lastTerminalActivityAt = now;
     };
     host.addEventListener("pointerdown", onPointerRecover, true);
+    host.addEventListener("wheel", onWheelRecover, { capture: true, passive: true });
 
     // While a TUI owns the pane, periodically heal metrics/listeners so a
     // long idle Grok session does not require exit/re-enter.
@@ -344,7 +418,7 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       // and once metrics collapse it cannot recover without a real layout.
       if (host.clientWidth < 1 || host.clientHeight < 1) return;
       try {
-        const next = recoverTerminalMetrics(term, fit);
+        const next = recoverForHost();
         if (imeComposing) scheduleImeConstraint();
         if (next) void ptyResize(pane.id, next.cols, next.rows);
       } catch {
@@ -361,17 +435,27 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       cancelAnimationFrame(initialFit);
       if (healTimer != null) window.clearInterval(healTimer);
       host.removeEventListener("pointerdown", onPointerRecover, true);
+      host.removeEventListener("wheel", onWheelRecover, true);
       ro.disconnect();
       detachInput();
       disposeClipboard();
       bellSub.dispose();
-      renderSub.dispose();
+      imeLayoutObserver.disconnect();
       unsubAgentStatus();
       screenObserver.dispose();
       textarea?.removeEventListener("focus", handleTerminalFocus);
       textarea?.removeEventListener("compositionstart", syncImeAnchor, true);
       textarea?.removeEventListener("compositionupdate", scheduleImeConstraint);
       textarea?.removeEventListener("compositionend", finishImeComposition);
+      window.removeEventListener("resize", scheduleImeAfterWindowResize);
+      if (imeConstraintTimer != null) {
+        window.clearTimeout(imeConstraintTimer);
+        imeConstraintTimer = null;
+      }
+      cancelAnimationFrame(imeResizeFrame);
+      cancelAnimationFrame(imeResizeSettledFrame);
+      restoreImeRepositioning?.();
+      restoreImeRepositioning = null;
       webgl?.dispose();
       unregisterTerminal(pane.id, handle);
       if (terminals.get(pane.id) === term) terminals.delete(pane.id);
@@ -407,7 +491,12 @@ export function TerminalView({ pane, session }: { pane: Pane; session: Session }
       // refresh() is required so TUI mouse coords match the live cell size.
       if (host && term && fit && host.clientWidth >= 1 && host.clientHeight >= 1) {
         try {
-          const next = recoverTerminalMetrics(term, fit);
+          const visible =
+            document.visibilityState !== "hidden" && getComputedStyle(host).visibility !== "hidden";
+          const next = recoverTerminalMetrics(term, fit, {
+            forceRendererRepair: visible,
+            allowRendererRepair: visible,
+          });
           if (next) void ptyResize(pane.id, next.cols, next.rows);
         } catch {
           /* not laid out yet */

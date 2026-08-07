@@ -387,6 +387,123 @@ test("active Chinese composition stays bounded when the terminal narrows", async
   expect(bounds.textareaRight).toBeLessThanOrEqual(bounds.screenRight + 1);
 });
 
+test("rapid TUI renders do not continuously reposition an active IME", async ({ page }) => {
+  await mockTerminalSession(page);
+  await page.goto("/");
+  const textarea = page.locator(".xterm-helper-textarea");
+  await expect(textarea).toBeFocused();
+
+  await textarea.evaluate((node) => {
+    const input = node as HTMLTextAreaElement;
+    input.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    // Some Windows IMEs restart composition without an intervening end event.
+    input.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    input.value = "zhong";
+    input.dispatchEvent(
+      new CompositionEvent("compositionupdate", { bubbles: true, data: "zhong" }),
+    );
+  });
+  await page.waitForTimeout(40);
+
+  await page.evaluate(() => {
+    const textareaNode = document.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
+    const composition = document.querySelector<HTMLElement>(".composition-view");
+    if (!textareaNode || !composition) throw new Error("IME elements are missing");
+    let styleMutations = 0;
+    const observer = new MutationObserver((records) => {
+      styleMutations += records.filter((record) => record.attributeName === "style").length;
+    });
+    observer.observe(textareaNode, { attributes: true, attributeFilter: ["style"] });
+    observer.observe(composition, { attributes: true, attributeFilter: ["style"] });
+    (
+      window as unknown as {
+        __imeStyleAudit: { observer: MutationObserver; count: () => number };
+      }
+    ).__imeStyleAudit = { observer, count: () => styleMutations };
+  });
+
+  for (let seq = 1; seq <= 8; seq += 1) {
+    await page.evaluate((outputSeq) => {
+      (window as unknown as { __emitTauri: (event: string, payload: unknown) => void }).__emitTauri(
+        "pty://output",
+        {
+          chunks: [
+            {
+              paneId: "pane-ime",
+              generation: 1,
+              seq: outputSeq,
+              // TUI frames often arrive split while the renderer cursor is
+              // temporarily visiting status rows before the final input row.
+              data: `\u001b[${5 + outputSeq};${10 + outputSeq}H*`,
+            },
+          ],
+        },
+      );
+    }, seq);
+    await page.waitForTimeout(20);
+  }
+  await page.waitForTimeout(40);
+
+  const imeAudit = await page.evaluate(() => {
+    const audit = (
+      window as unknown as {
+        __imeStyleAudit: { observer: MutationObserver; count: () => number };
+      }
+    ).__imeStyleAudit;
+    audit.observer.disconnect();
+    const composition = document.querySelector<HTMLElement>(".composition-view");
+    if (!composition) throw new Error("IME composition view is missing");
+    const style = getComputedStyle(composition);
+    const result = {
+      styleMutations: audit.count(),
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      height: composition.getBoundingClientRect().height,
+      lineHeight: style.lineHeight,
+    };
+    document
+      .querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")
+      ?.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+    return result;
+  });
+
+  expect(imeAudit.styleMutations).toBe(0);
+  expect(imeAudit.fontFamily).toContain("Cascadia Mono");
+  expect(imeAudit.fontSize).toBe("14px");
+  expect(Number.parseFloat(imeAudit.lineHeight)).toBeCloseTo(imeAudit.height, 0);
+  await expect(page.locator(".xterm-rows")).toContainText("*");
+  expect(await page.locator(".xterm-cursor").count()).toBeLessThanOrEqual(1);
+});
+
+test("rapid split TUI frames leave only one rendered terminal cursor", async ({ page }) => {
+  await mockTerminalSession(page);
+  await page.goto("/");
+  await expect(page.locator(".xterm-screen")).toBeVisible();
+
+  const cursorCounts: number[] = [];
+  for (let seq = 1; seq <= 12; seq += 1) {
+    await page.evaluate((outputSeq) => {
+      (window as unknown as { __emitTauri: (event: string, payload: unknown) => void }).__emitTauri(
+        "pty://output",
+        {
+          chunks: [
+            {
+              paneId: "pane-ime",
+              generation: 1,
+              seq: outputSeq,
+              data: `\u001b[${2 + (outputSeq % 10)};${4 + outputSeq}H${outputSeq % 10}`,
+            },
+          ],
+        },
+      );
+    }, seq);
+    await page.waitForTimeout(20);
+    cursorCounts.push(await page.locator(".xterm-cursor").count());
+  }
+
+  expect(Math.max(...cursorCounts)).toBeLessThanOrEqual(1);
+});
+
 test("closing a pane during IME composition does not raise a page error", async ({ page }) => {
   await mockTerminalSession(page);
   const pageErrors: string[] = [];
@@ -490,6 +607,88 @@ test("switching tabs restores focus to that session's terminal", async ({ page }
     document.activeElement?.closest<HTMLElement>("[data-pane-id]")?.dataset.paneId,
   );
   expect(focusedPane).toBe("pane-ime-hidden");
+});
+
+test("old TUI keeps DEFAULT mouse clicks and wheel after switching tabs", async ({ page }) => {
+  await mockTerminalSession(page, true);
+  await page.goto("/");
+  await expect(page.locator(".xterm-screen").first()).toBeVisible();
+
+  await page.evaluate(() => {
+    (window as unknown as { __emitTauri: (event: string, payload: unknown) => void }).__emitTauri(
+      "pty://output",
+      {
+        chunks: [
+          {
+            paneId: "pane-ime",
+            generation: 1,
+            seq: 1,
+            // VT200 tracking with legacy DEFAULT encoding.
+            data: "\u001b[?1000h\u001b[?1006l",
+          },
+        ],
+      },
+    );
+  });
+  await expect(page.locator('[data-pane-id="pane-ime"] .xterm')).toHaveClass(
+    /enable-mouse-events/,
+  );
+
+  const tabs = page.locator(".tabbar [role=tab]");
+  await tabs.nth(1).click();
+  await tabs.nth(0).click();
+  await expect(tabs.nth(0)).toHaveAttribute("aria-selected", "true");
+
+  await page.evaluate(() => {
+    (
+      window as unknown as {
+        __tauriInvokes: Array<{ command: string; args?: Record<string, unknown> }>;
+      }
+    ).__tauriInvokes.length = 0;
+    const now = Date.now();
+    Date.now = () => now + 30_000;
+  });
+
+  const screen = page.locator('[data-pane-id="pane-ime"] .xterm-screen');
+  const box = await screen.boundingBox();
+  if (!box) throw new Error("active terminal screen has no bounds");
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, 120);
+
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          window as unknown as {
+            __tauriInvokes: Array<{
+              command: string;
+              args?: { paneId?: string; bytes?: number[] };
+            }>;
+          }
+        ).__tauriInvokes.filter(
+          (entry) => entry.command === "pty_write_bytes" && entry.args?.paneId === "pane-ime",
+        ),
+      ),
+    )
+    .toHaveLength(3);
+
+  const reports = await page.evaluate(() =>
+    (
+      window as unknown as {
+        __tauriInvokes: Array<{
+          command: string;
+          args?: { paneId?: string; bytes?: number[] };
+        }>;
+      }
+    ).__tauriInvokes
+      .filter(
+        (entry) => entry.command === "pty_write_bytes" && entry.args?.paneId === "pane-ime",
+      )
+      .map((entry) => entry.args?.bytes),
+  );
+  for (const bytes of reports) {
+    expect(bytes?.slice(0, 3)).toEqual([0x1b, 0x5b, 0x4d]);
+  }
 });
 
 test("splitting a pane focuses the backend-selected new terminal", async ({ page }) => {

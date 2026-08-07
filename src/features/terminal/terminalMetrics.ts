@@ -26,6 +26,11 @@ export interface TerminalMetricsTarget {
   resize?(cols: number, rows: number): void;
 }
 
+interface TerminalRecoveryOptions {
+  forceRendererRepair?: boolean;
+  allowRendererRepair?: boolean;
+}
+
 type CoreLike = {
   _charSizeService?: {
     measure?: () => void;
@@ -40,6 +45,9 @@ type CoreLike = {
     _isPaused?: boolean;
     _needsFullRefresh?: boolean;
     refreshRows?: (start: number, end: number, isRedrawOnly?: boolean) => void;
+  };
+  _compositionHelper?: {
+    updateCompositionElements?: (dontRecurse?: boolean) => void;
   };
   coreMouseService?: {
     activeProtocol: string;
@@ -63,6 +71,33 @@ export function isTerminalMouseBroken(terminal: TerminalMetricsTarget): boolean 
   const cellOk = !!cell && cell.width > 0 && cell.height > 0;
   const paused = core._renderService?._isPaused === true;
   return !charOk || !cellOk || paused;
+}
+
+/**
+ * Freeze only xterm's render-driven IME positioning while composition is
+ * active. TUI frames keep painting, but their temporary cursor positions can
+ * no longer move WebView2's native candidate-window anchor.
+ */
+export function suspendTerminalImeRepositioning(terminal: TerminalMetricsTarget): () => void {
+  const helper = coreOf(terminal)?._compositionHelper;
+  const original = helper?.updateCompositionElements;
+  if (!helper || typeof original !== "function") return () => {};
+
+  const suppressed = () => {};
+  try {
+    helper.updateCompositionElements = suppressed;
+  } catch {
+    return () => {};
+  }
+
+  let restored = false;
+  return () => {
+    if (restored) return;
+    restored = true;
+    if (helper.updateCompositionElements === suppressed) {
+      helper.updateCompositionElements = original;
+    }
+  };
 }
 
 function forceCharMeasure(terminal: TerminalMetricsTarget): void {
@@ -121,20 +156,10 @@ export function rebindTerminalMouse(terminal: TerminalMetricsTarget): void {
       cms.activeProtocol = "NONE";
     }
     cms.activeProtocol = previous === "NONE" ? "NONE" : previous;
-    // Agent TUIs enable SGR (1006). Soft resets often drop encoding to DEFAULT
-    // while leaving protocol on — DEFAULT reports go to onBinary. Prefer SGR
-    // when mouse is active so reports stay on the normal data path too.
-    if (
-      previous !== "NONE" &&
-      previousEncoding === "DEFAULT" &&
-      typeof cms.activeEncoding === "string"
-    ) {
-      try {
-        cms.activeEncoding = "SGR";
-      } catch {
-        /* ignore */
-      }
-    } else if (previousEncoding && previousEncoding !== "DEFAULT") {
+    // Keep the encoding selected by the agent. Changing DEFAULT to SGR here
+    // would alter xterm's wire format without sending the matching DECSET
+    // sequence to the PTY, leaving the agent and frontend out of sync.
+    if (previousEncoding && previousEncoding !== "DEFAULT") {
       try {
         cms.activeEncoding = previousEncoding;
       } catch {
@@ -177,11 +202,17 @@ export function forceTerminalResizeCycle(
 export function recoverTerminalMetrics(
   terminal: TerminalMetricsTarget,
   fit: FitTarget,
+  options: TerminalRecoveryOptions = {},
 ): { cols: number; rows: number } | null {
   const before = `${terminal.cols}x${terminal.rows}`;
+  const needsRendererRepair =
+    options.forceRendererRepair === true ||
+    (options.allowRendererRepair !== false && isTerminalMouseBroken(terminal));
 
-  unpauseTerminalRenderer(terminal);
-  forceCharMeasure(terminal);
+  if (needsRendererRepair) {
+    unpauseTerminalRenderer(terminal);
+    forceCharMeasure(terminal);
+  }
 
   try {
     fit.fit();
@@ -189,30 +220,32 @@ export function recoverTerminalMetrics(
     /* host not laid out */
   }
 
-  const core = coreOf(terminal);
-  try {
-    core?._renderService?.clear?.();
-  } catch {
-    /* ignore */
-  }
-
-  forceTerminalResizeCycle(terminal);
-
-  try {
-    core?.viewport?.syncScrollArea?.(true);
-  } catch {
-    /* ignore */
-  }
-
-  unpauseTerminalRenderer(terminal);
-
-  if (terminal.rows > 0) {
+  if (needsRendererRepair) {
+    const core = coreOf(terminal);
     try {
-      // Bypass debounced pause if we just cleared it.
-      core?._renderService?.refreshRows?.(0, terminal.rows - 1);
-      terminal.refresh(0, terminal.rows - 1);
+      core?._renderService?.clear?.();
     } catch {
-      /* mid-teardown */
+      /* ignore */
+    }
+
+    forceTerminalResizeCycle(terminal);
+
+    try {
+      core?.viewport?.syncScrollArea?.(true);
+    } catch {
+      /* ignore */
+    }
+
+    unpauseTerminalRenderer(terminal);
+
+    if (terminal.rows > 0) {
+      try {
+        // Bypass debounced pause if we just cleared it.
+        core?._renderService?.refreshRows?.(0, terminal.rows - 1);
+        terminal.refresh(0, terminal.rows - 1);
+      } catch {
+        /* mid-teardown */
+      }
     }
   }
 
