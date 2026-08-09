@@ -1,7 +1,6 @@
 // Global tab strip (spec §5.1): cross-project tabs, rename / close /
 // close-others / drag reorder / horizontal scroll / Ctrl+W.
-import { useEffect, useRef, useState } from "react";
-
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { IconAlert, IconClose, IconPlay, IconPlus } from "../../shared/icons/Icons";
 import { AgentBadge } from "../terminal/AgentBadge";
 import { t } from "../../shared/i18n";
@@ -262,6 +261,24 @@ export function ContextMenu({
   items: ContextMenuItem[];
   onClose: () => void;
 }) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  // Clamp/reflect into the viewport: a menu opened near the bottom edge must
+  // flip upward instead of being clipped by the window.
+  const [pos, setPos] = useState({ left: x, top: y });
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const margin = 8;
+    const viewportW = window.innerWidth;
+    const viewportH = window.innerHeight;
+    const left = Math.min(x, Math.max(margin, viewportW - rect.width - margin));
+    const top =
+      y + rect.height > viewportH - margin
+        ? Math.max(margin, y - rect.height)
+        : y;
+    setPos({ left, top });
+  }, [x, y]);
   return (
     <div
       style={{ position: "fixed", inset: 0, zIndex: 90 }}
@@ -272,11 +289,12 @@ export function ContextMenu({
       }}
     >
       <div
+        ref={menuRef}
         role="menu"
         style={{
           position: "fixed",
-          left: x,
-          top: y,
+          left: pos.left,
+          top: pos.top,
           background: "var(--bg-raised)",
           border: "1px solid var(--border-strong)",
           borderRadius: 4,

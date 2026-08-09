@@ -5,6 +5,8 @@ import { createSyncOutputGate, type SyncOutputGate } from "./syncOutput";
 const ESC = "\u001b";
 const BEGIN = `${ESC}[?2026h`;
 const END = `${ESC}[?2026l`;
+const OSC0 = `${ESC}]0;`;
+const BEL = "\u0007";
 
 interface Emitted {
   data: string;
@@ -27,9 +29,12 @@ function setup(options: Parameters<typeof createSyncOutputGate>[1] = {}) {
   const clearTimeoutSpy = vi.fn((id: number) => {
     timeouts.delete(id);
   });
+  let clock = 0;
+  const nowSpy = vi.fn(() => clock);
   const gate = createSyncOutputGate(emit, {
     setTimeout: setTimeoutSpy,
     clearTimeout: clearTimeoutSpy,
+    now: nowSpy,
     ...options,
   });
   const fireAllTimers = () => {
@@ -37,7 +42,27 @@ function setup(options: Parameters<typeof createSyncOutputGate>[1] = {}) {
     timeouts.clear();
     handlers.forEach((handler) => handler());
   };
-  return { gate, emitted, emit, setTimeoutSpy, clearTimeoutSpy, fireAllTimers };
+  return {
+    gate,
+    emitted,
+    emit,
+    setTimeoutSpy,
+    clearTimeoutSpy,
+    fireAllTimers,
+    setClock: (ms: number) => {
+      clock = ms;
+    },
+  };
+}
+
+/**
+ * A Codex-style animation frame as captured from the real CLI: a row-clear
+ * pass (cursor moves + `CSI K`), an OSC 0 title update carrying the spinner
+ * glyph, and an empty DEC 2026 block. The whole frame lives OUTSIDE the sync
+ * markers — exactly what the frame-coalescing mode must merge.
+ */
+function codexFrame(spinner: string, label: string): string {
+  return `${ESC}[14;2H${ESC}[K${ESC}[16;19H${ESC}[K${ESC}[22;46H${ESC}[K${ESC}[27;2H${ESC}[K${ESC}[119C${ESC}[m${OSC0}${spinner} ${label}${BEL}${BEGIN}${END}`;
 }
 
 describe("syncOutput gate", () => {
@@ -154,5 +179,88 @@ describe("syncOutput gate", () => {
     fireAllTimers();
     gate.push({ data: "late", seq: 2, generation: 1 });
     expect(emitted).toHaveLength(0);
+  });
+
+  describe("OSC 0 animation-frame coalescing (Codex-style)", () => {
+    it("merges high-frequency frames into per-frame writes", () => {
+      const { gate, emitted, setClock, fireAllTimers } = setup();
+      const f1 = codexFrame("⠋", "Ethanfly");
+      const f2 = codexFrame("⠙", "Ethanfly");
+      const f3 = codexFrame("⠹", "Ethanfly");
+      const f4 = codexFrame("⠸", "Ethanfly");
+
+      // Frame 1: single OSC 0 — passes through; the empty DEC 2026 block is
+      // flushed separately (gate behavior, byte order preserved).
+      setClock(0);
+      gate.push({ data: f1, seq: 1, generation: 1 });
+      expect(emitted.map((entry) => entry.data).join("")).toBe(f1);
+      expect(emitted).toHaveLength(2); // [row-clear+OSC0, sync markers]
+
+      // Frame 2: second OSC 0 inside the detect window — coalescing starts
+      // at its OSC 0 marker (one-frame detection latency for the row-clear
+      // pass, which was already emitted).
+      setClock(80);
+      gate.push({ data: f2, seq: 2, generation: 1 });
+      expect(emitted.map((entry) => entry.data).join("")).toBe(
+        f1 + f2.slice(0, f2.indexOf(OSC0)),
+      );
+
+      // Frame 3: everything since frame 2's OSC 0 (its markers, this frame's
+      // row-clear pass and OSC 0) flushes as ONE write — the mid-frame
+      // cursor sweep is never rendered.
+      setClock(160);
+      gate.push({ data: f3, seq: 3, generation: 1 });
+      const f2Tail = f2.slice(f2.indexOf(OSC0)); // OSC0_2 + its empty sync block
+      const f3Body = f3.slice(0, f3.indexOf(BEGIN)); // row-clear pass + OSC0_3
+      expect(emitted[emitted.length - 1].data).toBe(f2Tail + f3Body);
+
+      // Frame 4: steady state — one write per animation frame. The trailing
+      // empty sync block is released by the hold-timeout safety valve.
+      setClock(240);
+      gate.push({ data: f4, seq: 4, generation: 1 });
+      fireAllTimers();
+      expect(emitted.map((entry) => entry.data).join("")).toBe(f1 + f2 + f3 + f4);
+      const f3Tail = f3.slice(f3.indexOf(BEGIN)); // frame 3's empty sync block
+      const f4Body = f4.slice(0, f4.indexOf(BEGIN));
+      expect(emitted[emitted.length - 2].data).toBe(f3Tail + f4Body);
+      expect(emitted[emitted.length - 1].data).toBe(f4.slice(f4.indexOf(BEGIN)));
+    });
+
+    it("does not coalesce sparse OSC 0 updates", () => {
+      const { gate, emitted, setClock } = setup();
+      setClock(0);
+      gate.push({ data: `plain1${OSC0}title1${BEL}`, seq: 1, generation: 1 });
+      setClock(2000); // > detect window (500ms)
+      gate.push({ data: `plain2${OSC0}title2${BEL}`, seq: 2, generation: 1 });
+      expect(emitted).toHaveLength(2);
+      expect(emitted[1].data).toBe(`plain2${OSC0}title2${BEL}`);
+    });
+
+    it("leaves frame-coalescing mode after a silent period", () => {
+      const { gate, emitted, setClock, fireAllTimers } = setup();
+      setClock(0);
+      gate.push({ data: `${OSC0}a${BEL}`, seq: 1, generation: 1 });
+      setClock(80);
+      gate.push({ data: `${OSC0}b${BEL}`, seq: 2, generation: 1 }); // enters mode
+      expect(emitted).toHaveLength(1);
+
+      setClock(80 + 2000 + 1); // silent beyond idle window
+      gate.push({ data: `fresh${OSC0}c${BEL}`, seq: 3, generation: 1 });
+      // Left mode: buffered OSC 0 b flushes, then fresh content emits live.
+      expect(emitted.map((entry) => entry.data).join("")).toBe(
+        `${OSC0}a${BEL}${OSC0}b${BEL}fresh${OSC0}c${BEL}`,
+      );
+      void fireAllTimers;
+    });
+
+    it("OSC 0 prefix split across chunks is carried", () => {
+      const { gate, emitted, setClock } = setup();
+      setClock(0);
+      gate.push({ data: `${ESC}]`, seq: 1, generation: 1 });
+      expect(emitted).toHaveLength(0); // partial OSC 0 opener held back
+      setClock(10);
+      gate.push({ data: `0;title${BEL}rest`, seq: 2, generation: 1 });
+      expect(emitted.map((entry) => entry.data).join("")).toBe(`${OSC0}title${BEL}rest`);
+    });
   });
 });
