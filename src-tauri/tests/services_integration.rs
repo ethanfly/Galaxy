@@ -13,14 +13,24 @@ fn init_repo(dir: &Path) {
             .output()
             .expect("git run")
     };
-    assert!(std::process::Command::new("git").arg("init").arg(dir).output().unwrap().status.success());
+    assert!(std::process::Command::new("git")
+        .arg("init")
+        .arg(dir)
+        .output()
+        .unwrap()
+        .status
+        .success());
     run(&["config", "user.email", "test@example.com"]);
     run(&["config", "user.name", "Galaxy Test"]);
     run(&["config", "commit.gpgsign", "false"]);
     std::fs::write(dir.join("README.md"), "hello").unwrap();
     run(&["add", "."]);
     let commit = run(&["commit", "-m", "initial"]);
-    assert!(commit.status.success(), "commit failed: {}", String::from_utf8_lossy(&commit.stderr));
+    assert!(
+        commit.status.success(),
+        "commit failed: {}",
+        String::from_utf8_lossy(&commit.stderr)
+    );
 }
 
 #[test]
@@ -33,8 +43,15 @@ fn git_status_on_real_repo() {
     let svc = GitService::new();
     let status = svc.status(tmp.path());
     assert!(status.is_repo);
-    assert_eq!(status.branch.as_deref().map(|b| b), Some("master").or(Some("main")));
-    assert!(status.changes.is_empty(), "clean after commit: {:?}", status.changes);
+    assert_eq!(
+        status.branch.as_deref().map(|b| b),
+        Some("master").or(Some("main"))
+    );
+    assert!(
+        status.changes.is_empty(),
+        "clean after commit: {:?}",
+        status.changes
+    );
 
     // dirty file → change shows up
     std::fs::write(tmp.path().join("README.md"), "changed").unwrap();
@@ -46,7 +63,12 @@ fn git_status_on_real_repo() {
     let branches = svc.branches(tmp.path()).unwrap();
     assert!(!branches.is_empty());
     let cur = branches.iter().find(|b| b.current).unwrap().name.clone();
-    std::process::Command::new("git").arg("-C").arg(tmp.path()).args(["checkout", "-b", "feature-x"]).output().unwrap();
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(tmp.path())
+        .args(["checkout", "-b", "feature-x"])
+        .output()
+        .unwrap();
     let checkout = svc.checkout(tmp.path(), &cur);
     assert!(checkout.is_ok(), "checkout back: {checkout:?}");
 }
@@ -61,15 +83,34 @@ fn git_checkout_conflict_surfaces_git_error() {
     let svc = GitService::new();
     let cur = svc.status(tmp.path()).branch.clone().unwrap();
     // Create a branch, change README on it, come back and dirty the file.
-    std::process::Command::new("git").arg("-C").arg(tmp.path()).args(["checkout", "-b", "other"]).output().unwrap();
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(tmp.path())
+        .args(["checkout", "-b", "other"])
+        .output()
+        .unwrap();
     std::fs::write(tmp.path().join("README.md"), "other version").unwrap();
-    std::process::Command::new("git").arg("-C").arg(tmp.path()).args(["commit", "-am", "other change"]).output().unwrap();
-    std::process::Command::new("git").arg("-C").arg(tmp.path()).args(["checkout", &cur]).output().unwrap();
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(tmp.path())
+        .args(["commit", "-am", "other change"])
+        .output()
+        .unwrap();
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(tmp.path())
+        .args(["checkout", &cur])
+        .output()
+        .unwrap();
     std::fs::write(tmp.path().join("README.md"), "local dirty").unwrap();
     // Dirty file conflicts with the branch difference → git refuses; we surface it.
     let res = svc.checkout(tmp.path(), "other");
     match res {
-        Err(e) => assert!(e.to_string().contains("Git") || e.to_string().contains("commit") || !e.to_string().is_empty()),
+        Err(e) => assert!(
+            e.to_string().contains("Git")
+                || e.to_string().contains("commit")
+                || !e.to_string().is_empty()
+        ),
         Ok(()) => {
             // Some git versions allow the switch if the change applies; still fine.
         }
@@ -89,8 +130,8 @@ fn ipc_contract_surface() {
         .expect("events.ts readable");
     let commands_rs = std::fs::read_to_string(format!("{manifest}/src/commands/mod.rs"))
         .expect("commands/mod.rs readable");
-    let state_rs = std::fs::read_to_string(format!("{manifest}/src/state.rs"))
-        .expect("state.rs readable");
+    let state_rs =
+        std::fs::read_to_string(format!("{manifest}/src/state.rs")).expect("state.rs readable");
 
     // Commands: call<T>("name") in client.ts ↔ name registered in mod.rs.
     let re = regex::Regex::new(r#"call\s*<[^>]*>\s*\("([a-z_]+)""#).unwrap();
@@ -101,7 +142,10 @@ fn ipc_contract_surface() {
             missing.push(name.to_string());
         }
     }
-    assert!(missing.is_empty(), "commands missing registration: {missing:?}");
+    assert!(
+        missing.is_empty(),
+        "commands missing registration: {missing:?}"
+    );
 
     // Events: EV constants ↔ events module entries.
     let mut missing_events = Vec::new();
@@ -117,5 +161,8 @@ fn ipc_contract_surface() {
             }
         }
     }
-    assert!(missing_events.is_empty(), "events missing in state.rs: {missing_events:?}");
+    assert!(
+        missing_events.is_empty(),
+        "events missing in state.rs: {missing_events:?}"
+    );
 }

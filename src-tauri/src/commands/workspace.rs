@@ -89,6 +89,8 @@ pub fn spawn_pane_process(state: &AppState, project_id: &str, session_id: &str, 
         pane.agent_kind,
         resume_cmd,
     );
+    // A fresh process must not inherit the previous process's agent status.
+    state.agent_status.write().remove(&pane.id);
     // Mark resume as injected so a restart doesn't double-inject.
     if pane.resume.is_some() {
         if let Some(session) = state
@@ -270,6 +272,7 @@ pub async fn project_remove(
     for pane_id in running {
         let _ = state.pty().kill(&pane_id);
         state.pty().unregister(&pane_id);
+        state.agent_status.write().remove(&pane_id);
     }
     state.git.unwatch(PathBuf::from(&path).as_path());
     state.persist().cmd()?;
@@ -349,6 +352,7 @@ pub async fn session_close(state: State<'_, Arc<AppState>>, id: String) -> CmdRe
     };
     for pane in session.layout.panes() {
         state.pty().unregister(&pane.id);
+        state.agent_status.write().remove(&pane.id);
     }
     state.persist().cmd()?;
     Ok(())
@@ -527,6 +531,9 @@ pub async fn pane_close(
         commit_pane_close(&mut store, &session_id, &pane_id)?
     };
     state.pty().unregister(&pane_id);
+    // Drop stale runtime agent status so a re-created pane with the same id
+    // starts from Idle instead of inheriting the closed pane's state.
+    state.agent_status.write().remove(&pane_id);
     state.persist().cmd()?;
     Ok(if removed_session {
         None
@@ -781,6 +788,7 @@ pub async fn template_apply(
     // Kill leftover PTYs, spawn PTYs for panes that don't have a process.
     for pane in leftover {
         state.pty().unregister(&pane.id);
+        state.agent_status.write().remove(&pane.id);
     }
     for pane in session.layout.panes() {
         if !state.pty().is_alive(&pane.id) {
@@ -865,6 +873,7 @@ fn restore_session_panes_with_generation(
         if !still_active(state) {
             // Cancel landed mid-spawn: tear down the orphan we just created.
             state.pty().unregister(&pane.id);
+            state.agent_status.write().remove(&pane.id);
             return any_ok;
         }
         any_ok = any_ok || state.pty().is_alive(&pane.id);
@@ -965,6 +974,8 @@ pub async fn recovery_clean_start(state: State<'_, Arc<AppState>>) -> CmdResult<
     for id in pane_ids {
         state.pty().unregister(&id);
     }
+    // Clean start drops every pane's runtime agent status too.
+    state.agent_status.write().clear();
     state.store.write().sessions.clear();
     state.recovered_from_crash.store(false, Ordering::SeqCst);
     state.persist().cmd()?;

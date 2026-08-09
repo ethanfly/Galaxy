@@ -71,7 +71,9 @@ impl AgentAdapter for PiAdapter {
             .to_lowercase();
         let mut out = Vec::new();
         for dir in dirs {
-            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
             for entry in rd.flatten() {
                 if cancel.load(std::sync::atomic::Ordering::SeqCst) {
                     return out;
@@ -130,9 +132,14 @@ impl AgentAdapter for PiAdapter {
                 }
                 let summary = first_nonempty(&lines, "/title")
                     .or_else(|| first_nonempty(&lines, "/summary"))
-                    .or_else(|| message_text(lines.iter().find(|v| {
-                        v.get("role").and_then(|r| r.as_str()) == Some("user")
-                    }).unwrap_or(&serde_json::Value::Null)))
+                    .or_else(|| {
+                        message_text(
+                            lines
+                                .iter()
+                                .find(|v| v.get("role").and_then(|r| r.as_str()) == Some("user"))
+                                .unwrap_or(&serde_json::Value::Null),
+                        )
+                    })
                     .unwrap_or_else(|| format!("Pi · {id}"));
                 out.push(AgentConversation {
                     agent_kind: AgentKind::Pi,
@@ -183,7 +190,10 @@ impl AgentAdapter for PiAdapter {
                 Some(AgentMessage {
                     role: role.into(),
                     text,
-                    at: v.get("timestamp").and_then(|t| t.as_str()).map(String::from),
+                    at: v
+                        .get("timestamp")
+                        .and_then(|t| t.as_str())
+                        .map(String::from),
                 })
             })
             .collect()

@@ -1,9 +1,9 @@
-pub mod paths;
-pub mod persistence;
+pub mod agents;
 pub mod blocks;
-pub mod logging;
-pub mod shell_detect;
+pub mod diagnostics;
 pub mod git;
 pub mod insights;
-pub mod diagnostics;
-pub mod agents;
+pub mod logging;
+pub mod paths;
+pub mod persistence;
+pub mod shell_detect;

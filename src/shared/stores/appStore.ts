@@ -12,6 +12,8 @@ import type {
   ShellProfile,
 } from "../ipc/types";
 import { setLanguage } from "../i18n";
+import { layoutPanes } from "../utils";
+import { useTerminalStore } from "./terminalStore";
 
 export type LoadState = "idle" | "loading" | "ready" | "error";
 
@@ -214,11 +216,27 @@ export const useAppStore = create<AppStoreState>((set, get) => ({
   },
 
   async closeSession(id) {
+    // Capture pane ids before the session is removed from the store.
+    const closing = get().sessions.find((s) => s.id === id);
+    const panes = closing ? layoutPanes(closing.layout).map((p) => p.id) : [];
     await ipc.sessionClose(id);
     const remaining = get().sessions.filter((s) => s.id !== id);
     set({ sessions: remaining });
     if (get().currentSessionId === id) {
       set({ currentSessionId: remaining[0]?.id ?? null });
+    }
+    // Drop runtime terminal state for the closed session's panes so a
+    // re-created session cannot inherit stale sequences / agent status.
+    for (const paneId of panes) {
+      useTerminalStore.getState().resetPane(paneId);
+    }
+    // resetPane is keyed by paneId; the session-level focus entry would
+    // otherwise linger forever after the session is gone.
+    const { focusedPane } = useTerminalStore.getState();
+    if (focusedPane[id] !== undefined) {
+      const next = { ...focusedPane };
+      delete next[id];
+      useTerminalStore.setState({ focusedPane: next });
     }
   },
 

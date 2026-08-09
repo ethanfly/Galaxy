@@ -154,11 +154,9 @@ fn install_panic_hook() {
         let msg = format!("PANIC in thread '{name}' at {location}: {payload}");
         // tracing may not be initialized yet — always try stderr + a log file.
         eprintln!("{msg}");
-        if let Some(dir) = directories::BaseDirs::new().map(|d| {
-            d.data_dir()
-                .join("com.galaxyterminal.app")
-                .join("logs")
-        }) {
+        if let Some(dir) = directories::BaseDirs::new()
+            .map(|d| d.data_dir().join("com.galaxyterminal.app").join("logs"))
+        {
             let _ = std::fs::create_dir_all(&dir);
             let path = dir.join("panic.log");
             let line = format!(
@@ -202,10 +200,9 @@ pub(crate) fn apply_global_hotkey(
                 }
             }
         })
-        .map_err(|e| error::CmdError::new(
-            "GLOBAL_HOTKEY",
-            format!("全局热键无效或已被占用: {e}"),
-        ))?;
+        .map_err(|e| {
+            error::CmdError::new("GLOBAL_HOTKEY", format!("全局热键无效或已被占用: {e}"))
+        })?;
     Ok(())
 }
 

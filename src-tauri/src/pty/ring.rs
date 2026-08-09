@@ -16,7 +16,10 @@ pub enum Replay {
     Chunks(Vec<RingChunk>),
     /// The requested range was partially evicted. Carries the chunks that
     /// are still buffered plus the lowest seq the buffer still holds.
-    Truncated { from_seq: u64, chunks: Vec<RingChunk> },
+    Truncated {
+        from_seq: u64,
+        chunks: Vec<RingChunk>,
+    },
 }
 
 pub struct RingBuffer {
@@ -29,11 +32,20 @@ pub struct RingBuffer {
 
 impl RingBuffer {
     pub fn new(byte_cap: usize, chunk_cap: usize) -> Self {
-        Self { chunks: VecDeque::new(), byte_cap, chunk_cap, bytes: 0, next_seq: 1 }
+        Self {
+            chunks: VecDeque::new(),
+            byte_cap,
+            chunk_cap,
+            bytes: 0,
+            next_seq: 1,
+        }
     }
 
     pub fn push(&mut self, data: String) -> RingChunk {
-        let chunk = RingChunk { seq: self.next_seq, data };
+        let chunk = RingChunk {
+            seq: self.next_seq,
+            data,
+        };
         self.next_seq += 1;
         self.bytes += chunk.data.len();
         self.chunks.push_back(chunk.clone());
@@ -56,7 +68,10 @@ impl RingBuffer {
             .cloned()
             .collect();
         if after_seq + 1 < oldest && !self.chunks.is_empty() {
-            Replay::Truncated { from_seq: oldest, chunks }
+            Replay::Truncated {
+                from_seq: oldest,
+                chunks,
+            }
         } else {
             Replay::Chunks(chunks)
         }
@@ -99,7 +114,10 @@ mod tests {
         }
         match r.replay(2) {
             Replay::Chunks(chunks) => {
-                assert_eq!(chunks.iter().map(|c| c.seq).collect::<Vec<_>>(), vec![3, 4, 5]);
+                assert_eq!(
+                    chunks.iter().map(|c| c.seq).collect::<Vec<_>>(),
+                    vec![3, 4, 5]
+                );
             }
             _ => panic!(),
         }

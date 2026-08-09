@@ -43,8 +43,12 @@ impl AgentAdapter for KimiAdapter {
         since_ms: u64,
         cancel: &CancelToken,
     ) -> Vec<AgentConversation> {
-        let Some(base) = Self::base() else { return Vec::new() };
-        let Ok(rd) = std::fs::read_dir(&base) else { return Vec::new() };
+        let Some(base) = Self::base() else {
+            return Vec::new();
+        };
+        let Ok(rd) = std::fs::read_dir(&base) else {
+            return Vec::new();
+        };
         let leaf = project_path
             .trim_end_matches(['\\', '/'])
             .rsplit(['\\', '/'])
@@ -132,7 +136,11 @@ impl AgentAdapter for KimiAdapter {
             .rev()
             .filter_map(|v| {
                 Some(AgentMessage {
-                    role: v.get("role").and_then(|r| r.as_str()).unwrap_or("assistant").into(),
+                    role: v
+                        .get("role")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("assistant")
+                        .into(),
                     text: message_text(v)?,
                     at: None,
                 })

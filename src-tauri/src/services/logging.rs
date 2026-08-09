@@ -15,7 +15,10 @@ impl RollingLog {
     pub fn new(dir: &Path) -> std::io::Result<Self> {
         std::fs::create_dir_all(dir)?;
         let name = format!("galaxy-{}.log", chrono_free_date());
-        Ok(Self { dir: dir.to_path_buf(), current: dir.join(name) })
+        Ok(Self {
+            dir: dir.to_path_buf(),
+            current: dir.join(name),
+        })
     }
 
     pub fn writer(&self) -> BoxedWriter {
@@ -24,14 +27,20 @@ impl RollingLog {
                 let _ = self.rotate();
             }
         }
-        match std::fs::OpenOptions::new().create(true).append(true).open(&self.current) {
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.current)
+        {
             Ok(f) => Box::new(f),
             Err(_) => Box::new(std::io::sink()),
         }
     }
 
     fn rotate(&self) -> std::io::Result<()> {
-        let rotated = self.current.with_extension(format!("{}.log", chrono_free_time()));
+        let rotated = self
+            .current
+            .with_extension(format!("{}.log", chrono_free_time()));
         std::fs::rename(&self.current, rotated)?;
         // prune old
         let mut logs: Vec<_> = std::fs::read_dir(&self.dir)?

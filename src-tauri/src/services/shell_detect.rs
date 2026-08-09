@@ -7,7 +7,13 @@
 //! deferred after the main window is shown.
 use crate::core::models::{ProfileSource, ShellProfile};
 
-fn profile(id: &str, name: &str, program: &str, args: Vec<&str>, icon: Option<&str>) -> ShellProfile {
+fn profile(
+    id: &str,
+    name: &str,
+    program: &str,
+    args: Vec<&str>,
+    icon: Option<&str>,
+) -> ShellProfile {
     ShellProfile {
         id: id.to_string(),
         name: name.to_string(),
@@ -212,7 +218,10 @@ mod tests {
         }
         #[cfg(windows)]
         {
-            assert!(profiles.iter().any(|p| p.id == "cmd"), "cmd must be detected on Windows");
+            assert!(
+                profiles.iter().any(|p| p.id == "cmd"),
+                "cmd must be detected on Windows"
+            );
             assert!(profiles.iter().any(|p| p.id == "windows-powershell"));
         }
     }
@@ -235,8 +244,20 @@ mod tests {
 
     #[test]
     fn merge_custom_preserves_detected_and_appends_new() {
-        let detected = vec![profile("cmd", "cmd", "C:\\Windows\\System32\\cmd.exe", vec![], None)];
-        let custom = vec![profile("custom-1", "My Shell", "C:\\tools\\x.exe", vec![], None)];
+        let detected = vec![profile(
+            "cmd",
+            "cmd",
+            "C:\\Windows\\System32\\cmd.exe",
+            vec![],
+            None,
+        )];
+        let custom = vec![profile(
+            "custom-1",
+            "My Shell",
+            "C:\\tools\\x.exe",
+            vec![],
+            None,
+        )];
         let merged = merge_custom_profiles(detected, &custom);
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[1].id, "custom-1");

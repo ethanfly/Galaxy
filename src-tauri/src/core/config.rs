@@ -146,9 +146,7 @@ impl TemplateNode {
     pub fn slot_count(&self) -> usize {
         match self {
             TemplateNode::Slot => 1,
-            TemplateNode::Split { first, second, .. } => {
-                first.slot_count() + second.slot_count()
-            }
+            TemplateNode::Split { first, second, .. } => first.slot_count() + second.slot_count(),
         }
     }
 }
@@ -201,7 +199,11 @@ mod auto_check_update_tests {
 pub fn default_shortcuts() -> Vec<ShortcutBinding> {
     use ShortcutBinding as S;
     fn b(command: &str, keys: &str) -> S {
-        S { command: command.into(), keys: keys.into(), enabled: true }
+        S {
+            command: command.into(),
+            keys: keys.into(),
+            enabled: true,
+        }
     }
     vec![
         b("terminal.new", "Ctrl+Shift+T"),

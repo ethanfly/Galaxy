@@ -73,7 +73,8 @@ impl Trigger {
                 "触发器正则过长（上限 {MAX_PATTERN_LEN} 字符）"
             )));
         }
-        self.compile().map_err(|e| AppError::InvalidInput(format!("触发器正则无效: {e}")))?;
+        self.compile()
+            .map_err(|e| AppError::InvalidInput(format!("触发器正则无效: {e}")))?;
         Ok(())
     }
 

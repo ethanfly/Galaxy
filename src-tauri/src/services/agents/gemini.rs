@@ -37,7 +37,9 @@ impl GeminiAdapter {
         if depth > 5 || cancel.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
@@ -45,7 +47,10 @@ impl GeminiAdapter {
                     Self::walk_chats(&p, depth + 1, out, cancel);
                 }
             } else {
-                let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let name = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 let is_chat = name.ends_with(".json")
                     || name.ends_with(".jsonl")
                     || name.contains("session")
@@ -191,7 +196,10 @@ impl AgentAdapter for GeminiAdapter {
                 Some(AgentMessage {
                     role,
                     text,
-                    at: v.get("timestamp").and_then(|t| t.as_str()).map(String::from),
+                    at: v
+                        .get("timestamp")
+                        .and_then(|t| t.as_str())
+                        .map(String::from),
                 })
             })
             .collect()

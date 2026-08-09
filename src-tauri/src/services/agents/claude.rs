@@ -43,7 +43,9 @@ impl AgentAdapter for ClaudeAdapter {
         since_ms: u64,
         cancel: &CancelToken,
     ) -> Vec<AgentConversation> {
-        let Some(base) = Self::base() else { return Vec::new() };
+        let Some(base) = Self::base() else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
         // Directory name is the sanitized cwd — a cheap project pre-filter,
         // then confirm with in-line `cwd` entries.
@@ -79,7 +81,9 @@ impl AgentAdapter for ClaudeAdapter {
         }
 
         for dir in dirs {
-            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
             for entry in rd.flatten() {
                 if cancel.load(std::sync::atomic::Ordering::SeqCst) {
                     return out;
@@ -106,10 +110,11 @@ impl AgentAdapter for ClaudeAdapter {
                 if !cwd.is_empty() && !path_matches(project_path, &cwd) {
                     continue;
                 }
-                let last_ts = lines
-                    .iter()
-                    .rev()
-                    .find_map(|v| v.get("timestamp").and_then(|t| t.as_str()).map(String::from));
+                let last_ts = lines.iter().rev().find_map(|v| {
+                    v.get("timestamp")
+                        .and_then(|t| t.as_str())
+                        .map(String::from)
+                });
                 let summary = lines
                     .iter()
                     .filter(|v| v.get("type").and_then(|t| t.as_str()) == Some("user"))
@@ -159,7 +164,10 @@ impl AgentAdapter for ClaudeAdapter {
                 Some(AgentMessage {
                     role: role.into(),
                     text,
-                    at: v.get("timestamp").and_then(|t| t.as_str()).map(String::from),
+                    at: v
+                        .get("timestamp")
+                        .and_then(|t| t.as_str())
+                        .map(String::from),
                 })
             })
             .collect();

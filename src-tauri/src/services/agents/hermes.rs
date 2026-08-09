@@ -91,9 +91,14 @@ impl AgentAdapter for HermesAdapter {
         _since_ms: u64,
         cancel: &CancelToken,
     ) -> Vec<AgentConversation> {
-        let Some(path) = Self::db_path() else { return Vec::new() };
-        let Some(conn) = Self::open(&path) else { return Vec::new() };
-        let Some((table, cols)) = Self::table(&conn, &["sessions", "session", "chats", "conversations"])
+        let Some(path) = Self::db_path() else {
+            return Vec::new();
+        };
+        let Some(conn) = Self::open(&path) else {
+            return Vec::new();
+        };
+        let Some((table, cols)) =
+            Self::table(&conn, &["sessions", "session", "chats", "conversations"])
         else {
             return Vec::new();
         };
@@ -101,15 +106,29 @@ impl AgentAdapter for HermesAdapter {
             return Vec::new();
         }
 
-        let id_col = Self::pick(&cols, &["id", "session_id", "uuid"]).unwrap_or_else(|| "id".into());
+        let id_col =
+            Self::pick(&cols, &["id", "session_id", "uuid"]).unwrap_or_else(|| "id".into());
         let title_col = Self::pick(&cols, &["title", "name", "summary", "label"]);
         let time_col = Self::pick(
             &cols,
-            &["updated_at", "last_active", "modified_at", "created_at", "timestamp"],
+            &[
+                "updated_at",
+                "last_active",
+                "modified_at",
+                "created_at",
+                "timestamp",
+            ],
         );
         let cwd_col = Self::pick(
             &cols,
-            &["cwd", "working_dir", "worktree", "project_path", "directory", "path"],
+            &[
+                "cwd",
+                "working_dir",
+                "worktree",
+                "project_path",
+                "directory",
+                "path",
+            ],
         );
 
         let has_title = title_col.is_some();
@@ -119,13 +138,24 @@ impl AgentAdapter for HermesAdapter {
         let sql = format!(
             "SELECT {id}{title}{time}{cwd} FROM {table} ORDER BY {order} DESC LIMIT 200",
             id = id_col,
-            title = title_col.as_ref().map(|c| format!(", {c}")).unwrap_or_default(),
-            time = time_col.as_ref().map(|c| format!(", {c}")).unwrap_or_default(),
-            cwd = cwd_col.as_ref().map(|c| format!(", {c}")).unwrap_or_default(),
+            title = title_col
+                .as_ref()
+                .map(|c| format!(", {c}"))
+                .unwrap_or_default(),
+            time = time_col
+                .as_ref()
+                .map(|c| format!(", {c}"))
+                .unwrap_or_default(),
+            cwd = cwd_col
+                .as_ref()
+                .map(|c| format!(", {c}"))
+                .unwrap_or_default(),
             table = table,
             order = order,
         );
-        let Ok(mut stmt) = conn.prepare(&sql) else { return Vec::new() };
+        let Ok(mut stmt) = conn.prepare(&sql) else {
+            return Vec::new();
+        };
         let leaf = project_path
             .trim_end_matches(['\\', '/'])
             .rsplit(['\\', '/'])
@@ -192,10 +222,13 @@ impl AgentAdapter for HermesAdapter {
         else {
             return Vec::new();
         };
-        let session_col =
-            Self::pick(&cols, &["session_id", "sessionId", "chat_id", "conversation_id"])
-                .unwrap_or_else(|| "session_id".into());
-        let role_col = Self::pick(&cols, &["role", "author", "sender"]).unwrap_or_else(|| "role".into());
+        let session_col = Self::pick(
+            &cols,
+            &["session_id", "sessionId", "chat_id", "conversation_id"],
+        )
+        .unwrap_or_else(|| "session_id".into());
+        let role_col =
+            Self::pick(&cols, &["role", "author", "sender"]).unwrap_or_else(|| "role".into());
         let Some(text_col) = Self::pick(&cols, &["content", "text", "body", "message"]) else {
             return Vec::new();
         };
@@ -206,7 +239,9 @@ impl AgentAdapter for HermesAdapter {
             table = table,
             session_col = session_col,
         );
-        let Ok(mut stmt) = conn.prepare(&sql) else { return Vec::new() };
+        let Ok(mut stmt) = conn.prepare(&sql) else {
+            return Vec::new();
+        };
         let rows = stmt
             .query_map(rusqlite::params![session_id, limit as i64], |r| {
                 Ok((

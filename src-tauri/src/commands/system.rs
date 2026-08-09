@@ -44,14 +44,16 @@ pub async fn config_update(
                 profiles.push(cp.clone());
             }
         }
-        let ids: HashSet<&str> = config.custom_profiles.iter().map(|p| p.id.as_str()).collect();
+        let ids: HashSet<&str> = config
+            .custom_profiles
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect();
         let existing_custom: Vec<String> = crate::services::shell_detect::detect_profiles()
             .into_iter()
             .map(|p| p.id)
             .collect();
-        profiles.retain(|p| {
-            existing_custom.contains(&p.id) || ids.contains(p.id.as_str())
-        });
+        profiles.retain(|p| existing_custom.contains(&p.id) || ids.contains(p.id.as_str()));
     }
     #[cfg(windows)]
     {
@@ -63,7 +65,10 @@ pub async fn config_update(
                     crate::platform::registry::unregister_context_menu()
                 };
                 if let Err(e) = res {
-                    tracing::warn!("右键菜单同步失败: {}", crate::services::logging::redact(&e.to_string()));
+                    tracing::warn!(
+                        "右键菜单同步失败: {}",
+                        crate::services::logging::redact(&e.to_string())
+                    );
                 }
             }
         }
@@ -80,11 +85,8 @@ pub fn validate_config(config: &AppConfig) -> CmdResult<()> {
         }
         if let Some(prev) = seen.insert(s.keys.as_str(), s.command.as_str()) {
             return Err(
-                CmdError::new(
-                    "SHORTCUT_CONFLICT",
-                    format!("快捷键 {} 冲突", s.keys),
-                )
-                .with_detail(format!("\"{}\" 与 \"{}\" 使用了相同按键", prev, s.command)),
+                CmdError::new("SHORTCUT_CONFLICT", format!("快捷键 {} 冲突", s.keys))
+                    .with_detail(format!("\"{}\" 与 \"{}\" 使用了相同按键", prev, s.command)),
             );
         }
     }
@@ -102,7 +104,10 @@ pub fn validate_config(config: &AppConfig) -> CmdResult<()> {
     }
     for w in &config.workflows {
         if w.command_template.trim().is_empty() {
-            return Err(CmdError::new("INVALID_INPUT", format!("Workflow {} 缺少命令模板", w.name)));
+            return Err(CmdError::new(
+                "INVALID_INPUT",
+                format!("Workflow {} 缺少命令模板", w.name),
+            ));
         }
         for p in &w.params {
             if let Some(def) = &p.default {
@@ -258,7 +263,10 @@ pub async fn diagnostics_report(state: State<'_, Arc<AppState>>) -> CmdResult<St
         time::OffsetDateTime::now_utc().unix_timestamp()
     ));
     let _ = std::fs::write(&file, &report);
-    Ok(format!("{report}\n\n> 已保存副本: {}", crate::services::logging::redact(&file.to_string_lossy())))
+    Ok(format!(
+        "{report}\n\n> 已保存副本: {}",
+        crate::services::logging::redact(&file.to_string_lossy())
+    ))
 }
 
 // ---------------------------------------------------------------- externals
@@ -427,10 +435,7 @@ async fn check_for_update(app: &tauri::AppHandle) -> CmdResult<UpdateInfo> {
         }),
         Err(e) => {
             tracing::warn!("updater check failed: {e}");
-            Err(CmdError::new(
-                "UPDATER",
-                format!("检查更新失败: {e}"),
-            ))
+            Err(CmdError::new("UPDATER", format!("检查更新失败: {e}")))
         }
     }
 }
@@ -452,9 +457,9 @@ async fn download_and_install_update(
     }
 
     let result = async {
-        let updater = app.updater().map_err(|e| {
-            CmdError::new("UPDATER_DISABLED", format!("更新服务未启用: {e}"))
-        })?;
+        let updater = app
+            .updater()
+            .map_err(|e| CmdError::new("UPDATER_DISABLED", format!("更新服务未启用: {e}")))?;
         let update = match updater.check().await {
             Ok(Some(u)) => u,
             Ok(None) => {
@@ -518,10 +523,7 @@ async fn download_and_install_update(
 // ---------------------------------------------------------------- context menu
 
 #[tauri::command]
-pub async fn context_menu_set(
-    state: State<'_, Arc<AppState>>,
-    enabled: bool,
-) -> CmdResult<()> {
+pub async fn context_menu_set(state: State<'_, Arc<AppState>>, enabled: bool) -> CmdResult<()> {
     #[cfg(windows)]
     {
         let exe = std::env::current_exe()
@@ -558,7 +560,14 @@ mod open {
 #[cfg(not(windows))]
 mod open {
     pub fn that(target: impl AsRef<std::ffi::OsStr>) -> std::io::Result<std::process::ExitStatus> {
-        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-        std::process::Command::new(opener).arg(target.as_ref()).spawn()?.wait()
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
+        std::process::Command::new(opener)
+            .arg(target.as_ref())
+            .spawn()?
+            .wait()
     }
 }

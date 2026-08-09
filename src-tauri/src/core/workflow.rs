@@ -97,7 +97,29 @@ fn is_safe_value(v: &str, allow_shell_chars: bool) -> bool {
     if allow_shell_chars {
         return !v.contains('\0') && !v.contains('\r') && !v.contains('\n');
     }
-    !v.chars().any(|c| matches!(c, '\0' | '\r' | '\n' | '|' | '&' | ';' | '<' | '>' | '`' | '$' | '(' | ')' | '{' | '}' | '[' | ']' | '"' | '\'' | '\\'))
+    !v.chars().any(|c| {
+        matches!(
+            c,
+            '\0' | '\r'
+                | '\n'
+                | '|'
+                | '&'
+                | ';'
+                | '<'
+                | '>'
+                | '`'
+                | '$'
+                | '('
+                | ')'
+                | '{'
+                | '}'
+                | '['
+                | ']'
+                | '"'
+                | '\''
+                | '\\'
+        )
+    })
 }
 
 pub fn validate_value(param: &WorkflowParam, raw: &str) -> Result<String, AppError> {
@@ -105,7 +127,10 @@ pub fn validate_value(param: &WorkflowParam, raw: &str) -> Result<String, AppErr
     match &param.ty {
         ParamType::String => {
             if param.required && v.is_empty() {
-                return Err(AppError::InvalidInput(format!("参数 {} 为必填项", param.name)));
+                return Err(AppError::InvalidInput(format!(
+                    "参数 {} 为必填项",
+                    param.name
+                )));
             }
             if !is_safe_value(v, param.allow_shell_chars) {
                 return Err(AppError::InvalidInput(format!(
@@ -116,20 +141,32 @@ pub fn validate_value(param: &WorkflowParam, raw: &str) -> Result<String, AppErr
         }
         ParamType::Int => {
             if param.required && v.is_empty() {
-                return Err(AppError::InvalidInput(format!("参数 {} 为必填项", param.name)));
+                return Err(AppError::InvalidInput(format!(
+                    "参数 {} 为必填项",
+                    param.name
+                )));
             }
             if !v.is_empty() && v.parse::<i64>().is_err() {
-                return Err(AppError::InvalidInput(format!("参数 {} 必须是整数", param.name)));
+                return Err(AppError::InvalidInput(format!(
+                    "参数 {} 必须是整数",
+                    param.name
+                )));
             }
         }
         ParamType::Bool => {
             if !matches!(v, "" | "true" | "false" | "0" | "1") {
-                return Err(AppError::InvalidInput(format!("参数 {} 必须是布尔值", param.name)));
+                return Err(AppError::InvalidInput(format!(
+                    "参数 {} 必须是布尔值",
+                    param.name
+                )));
             }
         }
         ParamType::Choice(options) => {
             if param.required && v.is_empty() {
-                return Err(AppError::InvalidInput(format!("参数 {} 为必填项", param.name)));
+                return Err(AppError::InvalidInput(format!(
+                    "参数 {} 为必填项",
+                    param.name
+                )));
             }
             if !v.is_empty() && !options.iter().any(|o| o == v) {
                 return Err(AppError::InvalidInput(format!(
@@ -141,10 +178,16 @@ pub fn validate_value(param: &WorkflowParam, raw: &str) -> Result<String, AppErr
         }
         ParamType::Path => {
             if param.required && v.is_empty() {
-                return Err(AppError::InvalidInput(format!("参数 {} 为必填项", param.name)));
+                return Err(AppError::InvalidInput(format!(
+                    "参数 {} 为必填项",
+                    param.name
+                )));
             }
             if v.contains('\0') {
-                return Err(AppError::InvalidInput(format!("参数 {} 不是合法路径", param.name)));
+                return Err(AppError::InvalidInput(format!(
+                    "参数 {} 不是合法路径",
+                    param.name
+                )));
             }
         }
     }
@@ -221,7 +264,10 @@ mod tests {
     fn resolves_template_with_types() {
         let wf = workflow();
         let out = wf
-            .resolve(&HashMap::from([("count".into(), "10".into())]), Some("C:\\proj".into()))
+            .resolve(
+                &HashMap::from([("count".into(), "10".into())]),
+                Some("C:\\proj".into()),
+            )
             .unwrap();
         assert_eq!(out.command, "git log --oneline -n 10 ");
         assert_eq!(out.cwd.as_deref(), Some("C:\\proj"));

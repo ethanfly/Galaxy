@@ -1,7 +1,10 @@
 //! Codex CLI: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (§5.4).
 use std::path::PathBuf;
 
-use super::{home_dir, message_text, mtime_ms, path_matches, read_jsonl, AgentAdapter, AgentAvailability, CancelToken};
+use super::{
+    home_dir, message_text, mtime_ms, path_matches, read_jsonl, AgentAdapter, AgentAvailability,
+    CancelToken,
+};
 use crate::core::models::{AgentConversation, AgentKind, AgentMessage, AgentStatus};
 
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -18,17 +21,23 @@ impl CodexAdapter {
     fn collect_rollout_files(base: &PathBuf, since_ms: u64, cancel: &CancelToken) -> Vec<PathBuf> {
         let mut out = Vec::new();
         let mut days_seen = 0usize;
-        let Ok(years) = std::fs::read_dir(base) else { return out };
+        let Ok(years) = std::fs::read_dir(base) else {
+            return out;
+        };
         let mut years: Vec<_> = years.flatten().filter(|e| e.path().is_dir()).collect();
         years.sort_by_key(|e| e.file_name());
         years.reverse();
         'years: for year in years {
-            let Ok(months) = std::fs::read_dir(year.path()) else { continue };
+            let Ok(months) = std::fs::read_dir(year.path()) else {
+                continue;
+            };
             let mut months: Vec<_> = months.flatten().filter(|e| e.path().is_dir()).collect();
             months.sort_by_key(|e| e.file_name());
             months.reverse();
             for month in months {
-                let Ok(days) = std::fs::read_dir(month.path()) else { continue };
+                let Ok(days) = std::fs::read_dir(month.path()) else {
+                    continue;
+                };
                 let mut days: Vec<_> = days.flatten().filter(|e| e.path().is_dir()).collect();
                 days.sort_by_key(|e| e.file_name());
                 days.reverse();
@@ -71,7 +80,11 @@ impl AgentAdapter for CodexAdapter {
 
     fn availability(&self) -> AgentAvailability {
         match Self::base() {
-            Some(p) if p.is_dir() => AgentAvailability { kind: Some(self.kind()), available: true, reason: String::new() },
+            Some(p) if p.is_dir() => AgentAvailability {
+                kind: Some(self.kind()),
+                available: true,
+                reason: String::new(),
+            },
             _ => AgentAvailability {
                 kind: Some(self.kind()),
                 available: false,
@@ -80,8 +93,15 @@ impl AgentAdapter for CodexAdapter {
         }
     }
 
-    fn scan(&self, project_path: &str, since_ms: u64, cancel: &CancelToken) -> Vec<AgentConversation> {
-        let Some(base) = Self::base() else { return Vec::new() };
+    fn scan(
+        &self,
+        project_path: &str,
+        since_ms: u64,
+        cancel: &CancelToken,
+    ) -> Vec<AgentConversation> {
+        let Some(base) = Self::base() else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
         for path in Self::collect_rollout_files(&base, since_ms, cancel) {
             if cancel.load(std::sync::atomic::Ordering::SeqCst) {
@@ -96,7 +116,11 @@ impl AgentAdapter for CodexAdapter {
                 .iter()
                 .find(|v| v.get("type").and_then(|t| t.as_str()) == Some("session_meta"));
             let id = meta
-                .and_then(|m| m.pointer("/payload/id").and_then(|i| i.as_str()).map(String::from))
+                .and_then(|m| {
+                    m.pointer("/payload/id")
+                        .and_then(|i| i.as_str())
+                        .map(String::from)
+                })
                 .or_else(|| {
                     path.file_stem().map(|s| {
                         s.to_string_lossy()
@@ -106,10 +130,16 @@ impl AgentAdapter for CodexAdapter {
                 });
             let Some(id) = id else { continue };
             let cwd = meta
-                .and_then(|m| m.pointer("/payload/cwd").and_then(|c| c.as_str()).map(String::from))
+                .and_then(|m| {
+                    m.pointer("/payload/cwd")
+                        .and_then(|c| c.as_str())
+                        .map(String::from)
+                })
                 .or_else(|| {
                     lines.iter().find_map(|v| {
-                        v.pointer("/payload/cwd").and_then(|c| c.as_str()).map(String::from)
+                        v.pointer("/payload/cwd")
+                            .and_then(|c| c.as_str())
+                            .map(String::from)
                     })
                 })
                 .unwrap_or_default();
@@ -119,10 +149,16 @@ impl AgentAdapter for CodexAdapter {
             let last_ts = lines
                 .iter()
                 .rev()
-                .find_map(|v| v.get("timestamp").and_then(|t| t.as_str()).map(String::from))
+                .find_map(|v| {
+                    v.get("timestamp")
+                        .and_then(|t| t.as_str())
+                        .map(String::from)
+                })
                 .or_else(|| {
                     meta.and_then(|m| {
-                        m.pointer("/payload/timestamp").and_then(|t| t.as_str()).map(String::from)
+                        m.pointer("/payload/timestamp")
+                            .and_then(|t| t.as_str())
+                            .map(String::from)
                     })
                 });
             let summary = lines
@@ -163,7 +199,10 @@ impl AgentAdapter for CodexAdapter {
                 Some(AgentMessage {
                     role: role.into(),
                     text,
-                    at: v.get("timestamp").and_then(|t| t.as_str()).map(String::from),
+                    at: v
+                        .get("timestamp")
+                        .and_then(|t| t.as_str())
+                        .map(String::from),
                 })
             })
             .collect();

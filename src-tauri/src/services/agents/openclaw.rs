@@ -28,13 +28,18 @@ impl OpenClawAdapter {
         if depth > 5 || cancel.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
-        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
         for e in rd.flatten() {
             let p = e.path();
             if p.is_dir() {
                 Self::walk(&p, depth + 1, out, cancel);
             } else {
-                let n = p.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
+                let n = p
+                    .file_name()
+                    .map(|x| x.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 if n.ends_with(".json") || n.ends_with(".jsonl") {
                     out.push(p);
                 }
@@ -103,7 +108,8 @@ impl AgentAdapter for OpenClawAdapter {
             } else {
                 continue;
             };
-            let cwd = first_nonempty(&lines, "/cwd").or_else(|| first_nonempty(&lines, "/workspace"));
+            let cwd =
+                first_nonempty(&lines, "/cwd").or_else(|| first_nonempty(&lines, "/workspace"));
             let path_lc = path.to_string_lossy().to_lowercase();
             let matched = cwd
                 .as_ref()
@@ -156,7 +162,11 @@ impl AgentAdapter for OpenClawAdapter {
             .rev()
             .filter_map(|v| {
                 Some(AgentMessage {
-                    role: v.get("role").and_then(|r| r.as_str()).unwrap_or("assistant").into(),
+                    role: v
+                        .get("role")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("assistant")
+                        .into(),
                     text: message_text(v)?,
                     at: None,
                 })

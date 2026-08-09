@@ -52,9 +52,9 @@ impl LayoutNode {
     pub fn find_pane(&self, pane_id: &str) -> Option<&Pane> {
         match self {
             LayoutNode::Pane { pane } if pane.id == pane_id => Some(pane),
-            LayoutNode::Split { first, second, .. } => {
-                first.find_pane(pane_id).or_else(|| second.find_pane(pane_id))
-            }
+            LayoutNode::Split { first, second, .. } => first
+                .find_pane(pane_id)
+                .or_else(|| second.find_pane(pane_id)),
             _ => None,
         }
     }
@@ -62,9 +62,9 @@ impl LayoutNode {
     pub fn find_pane_mut(&mut self, pane_id: &str) -> Option<&mut Pane> {
         match self {
             LayoutNode::Pane { pane } if pane.id == pane_id => Some(pane),
-            LayoutNode::Split { first, second, .. } => {
-                first.find_pane_mut(pane_id).or_else(|| second.find_pane_mut(pane_id))
-            }
+            LayoutNode::Split { first, second, .. } => first
+                .find_pane_mut(pane_id)
+                .or_else(|| second.find_pane_mut(pane_id)),
             _ => None,
         }
     }
@@ -107,16 +107,22 @@ impl LayoutNode {
                 matches!(**second, LayoutNode::Pane { ref pane } if pane.id == pane_id);
             if hit_first || hit_second {
                 let (removed, survivor) = if hit_first {
-                    let LayoutNode::Split { first, second, .. } =
-                        std::mem::replace(self, LayoutNode::Pane { pane: Pane::placeholder() })
-                    else {
+                    let LayoutNode::Split { first, second, .. } = std::mem::replace(
+                        self,
+                        LayoutNode::Pane {
+                            pane: Pane::placeholder(),
+                        },
+                    ) else {
                         unreachable!()
                     };
                     (*first, *second)
                 } else {
-                    let LayoutNode::Split { first, second, .. } =
-                        std::mem::replace(self, LayoutNode::Pane { pane: Pane::placeholder() })
-                    else {
+                    let LayoutNode::Split { first, second, .. } = std::mem::replace(
+                        self,
+                        LayoutNode::Pane {
+                            pane: Pane::placeholder(),
+                        },
+                    ) else {
                         unreachable!()
                     };
                     (*second, *first)
@@ -179,7 +185,12 @@ impl LayoutNode {
     pub fn normalize(&mut self) {
         match self {
             LayoutNode::Pane { .. } => {}
-            LayoutNode::Split { ratio, first, second, .. } => {
+            LayoutNode::Split {
+                ratio,
+                first,
+                second,
+                ..
+            } => {
                 *ratio = ratio.clamp(MIN_RATIO, MAX_RATIO);
                 first.normalize();
                 second.normalize();
@@ -194,7 +205,10 @@ impl LayoutNode {
         let mut ids = std::collections::HashSet::new();
         for p in self.panes() {
             if !ids.insert(p.id.clone()) {
-                return Err(AppError::Invariant(format!("布局树中 Pane id 重复: {}", p.id)));
+                return Err(AppError::Invariant(format!(
+                    "布局树中 Pane id 重复: {}",
+                    p.id
+                )));
             }
         }
         match self {
@@ -211,7 +225,9 @@ impl LayoutNode {
         if matches!(self, LayoutNode::Pane { pane } if pane.id == pane_id) {
             let pane = std::mem::replace(
                 self,
-                LayoutNode::Pane { pane: Pane::placeholder() },
+                LayoutNode::Pane {
+                    pane: Pane::placeholder(),
+                },
             );
             if let LayoutNode::Pane { pane } = pane {
                 return Some(pane);
@@ -362,7 +378,10 @@ mod tests {
         // Expected: { "pane": { "id": ..., "profile": {...}, ... } }
         // Not:      { "pane": { "pane": { ... } } }
         let pane_obj = json.get("pane").expect("pane tag");
-        assert!(pane_obj.get("profile").is_some(), "profile must be at pane.*");
+        assert!(
+            pane_obj.get("profile").is_some(),
+            "profile must be at pane.*"
+        );
         assert!(pane_obj.get("pane").is_none(), "must not double-nest pane");
         assert!(pane_obj.get("id").is_some());
         // Round-trip

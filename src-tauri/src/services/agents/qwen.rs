@@ -43,7 +43,9 @@ impl AgentAdapter for QwenAdapter {
         since_ms: u64,
         cancel: &CancelToken,
     ) -> Vec<AgentConversation> {
-        let Some(base) = Self::base() else { return Vec::new() };
+        let Some(base) = Self::base() else {
+            return Vec::new();
+        };
         let mut dirs = Vec::new();
         let san = sanitize_cwd(project_path);
         for cand in [base.join(&san), base.join(san.trim_start_matches('-'))] {
@@ -75,13 +77,19 @@ impl AgentAdapter for QwenAdapter {
                 if !root.is_dir() {
                     continue;
                 }
-                let Ok(rd) = std::fs::read_dir(&root) else { continue };
+                let Ok(rd) = std::fs::read_dir(&root) else {
+                    continue;
+                };
                 for entry in rd.flatten() {
                     if cancel.load(std::sync::atomic::Ordering::SeqCst) {
                         return out;
                     }
                     let path = entry.path();
-                    if path.extension().map(|e| e != "jsonl" && e != "json").unwrap_or(true) {
+                    if path
+                        .extension()
+                        .map(|e| e != "jsonl" && e != "json")
+                        .unwrap_or(true)
+                    {
                         continue;
                     }
                     if since_ms > 0 && mtime_ms(&path) < since_ms {
@@ -126,7 +134,11 @@ impl AgentAdapter for QwenAdapter {
             .rev()
             .filter_map(|v| {
                 Some(AgentMessage {
-                    role: v.get("role").and_then(|r| r.as_str()).unwrap_or("assistant").into(),
+                    role: v
+                        .get("role")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("assistant")
+                        .into(),
                     text: message_text(v)?,
                     at: None,
                 })

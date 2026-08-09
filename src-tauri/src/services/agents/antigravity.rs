@@ -29,14 +29,19 @@ impl AntigravityAdapter {
             if !base.is_dir() {
                 continue;
             }
-            let Ok(rd) = std::fs::read_dir(&base) else { continue };
+            let Ok(rd) = std::fs::read_dir(&base) else {
+                continue;
+            };
             for e in rd.flatten() {
                 if cancel.load(std::sync::atomic::Ordering::SeqCst) {
                     return files;
                 }
                 let p = e.path();
                 if p.is_file() {
-                    let n = p.file_name().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
+                    let n = p
+                        .file_name()
+                        .map(|x| x.to_string_lossy().to_string())
+                        .unwrap_or_default();
                     if n.ends_with(".json") || n.ends_with(".jsonl") {
                         files.push(p);
                     }
@@ -165,7 +170,11 @@ impl AgentAdapter for AntigravityAdapter {
             .rev()
             .filter_map(|v| {
                 Some(AgentMessage {
-                    role: v.get("role").and_then(|r| r.as_str()).unwrap_or("assistant").into(),
+                    role: v
+                        .get("role")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("assistant")
+                        .into(),
                     text: message_text(v)?,
                     at: None,
                 })

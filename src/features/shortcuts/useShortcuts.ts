@@ -96,6 +96,16 @@ async function dispatch(command: string): Promise<void> {
       const focused = ts.focusedPane[session.id] ?? layoutPanes(session.layout)[0]?.id;
       if (focused) {
         await paneClose(focused);
+        useTerminalStore.getState().resetPane(focused);
+        // The closed pane may have been the focused one — drop the stale
+        // session-level focus entry so the next dispatch cannot target a
+        // pane that no longer exists.
+        const cur = useTerminalStore.getState();
+        if (cur.focusedPane[session.id] === focused) {
+          const next = { ...cur.focusedPane };
+          delete next[session.id];
+          useTerminalStore.setState({ focusedPane: next });
+        }
         await app.refreshSessions();
       }
       return;

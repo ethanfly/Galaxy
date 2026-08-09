@@ -43,7 +43,11 @@ pub struct CmdError {
 
 impl CmdError {
     pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Self { code: code.into(), message: message.into(), detail: None }
+        Self {
+            code: code.into(),
+            message: message.into(),
+            detail: None,
+        }
     }
     pub fn with_detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());

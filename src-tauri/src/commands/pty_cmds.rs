@@ -10,11 +10,7 @@ use crate::state::AppState;
 /// Direct PTY input. Kept synchronous so keystrokes and mouse reports (DOWN
 /// then UP) are not reordered by the async runtime's blocking pool.
 #[tauri::command]
-pub fn pty_write(
-    state: State<'_, Arc<AppState>>,
-    pane_id: String,
-    data: String,
-) -> CmdResult<()> {
+pub fn pty_write(state: State<'_, Arc<AppState>>, pane_id: String, data: String) -> CmdResult<()> {
     state.pty().write_input(&pane_id, &data).cmd()
 }
 
@@ -26,10 +22,7 @@ pub fn pty_write_bytes(
     pane_id: String,
     bytes: Vec<u8>,
 ) -> CmdResult<()> {
-    state
-        .pty()
-        .write_input_bytes(&pane_id, &bytes, None)
-        .cmd()
+    state.pty().write_input_bytes(&pane_id, &bytes, None).cmd()
 }
 
 /// Synchronized input broadcast: write to every pane of the session (§5.2).

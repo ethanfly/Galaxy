@@ -32,6 +32,10 @@ const MAX_DRAIN_PER_WINDOW: usize = 256;
 /// Without OSC 133, finalize a quiet command block after this idle window so
 /// history records the last command without waiting for the next Enter.
 const HEURISTIC_IDLE_FLUSH: Duration = Duration::from_millis(900);
+/// An agent pane that produced no output for this long while the state
+/// machine still reports Working is forced to Idle (screen observer may have
+/// gone quiet because the prompt scrolled out of its window).
+const AGENT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn take_agent_stream_evidence(pending: &mut String) -> String {
     let evidence = pending.clone();
@@ -42,6 +46,18 @@ fn take_agent_stream_evidence(pending: &mut String) -> String {
         .map(|(index, character)| index + character.len_utf8())
     {
         pending.drain(..carry_start);
+    } else {
+        // No newline yet (TUI spinner redraws in place). The line is still
+        // live — keep only a short carry so a long single line cannot grow
+        // `pending` without bound, while `working...done` style updates on
+        // the same line still re-enter the evidence window.
+        let keep = pending.len().min(256);
+        let cut = pending.len() - keep;
+        let mut idx = cut;
+        while !pending.is_char_boundary(idx) {
+            idx += 1;
+        }
+        pending.drain(..idx);
     }
     evidence
 }
@@ -722,12 +738,15 @@ impl PtyManager {
     }
 
     /// Finalize quiet heuristic blocks so a single command appears in history
-    /// without waiting for the next Enter.
+    /// without waiting for the next Enter. Also drives the agent state machine
+    /// idle timeout: an agent that stopped producing output (and whose screen
+    /// no longer shows a status line) must not stay "Working" forever.
     fn flush_idle_heuristic_blocks(
         sink: &Arc<dyn PtyEventSink>,
         panes: &Arc<Mutex<HashMap<String, PaneCtx>>>,
     ) {
         let mut completed: Vec<(String, crate::core::models::CommandBlock)> = Vec::new();
+        let mut agent_idle: Vec<PaneSideEffect> = Vec::new();
         {
             let mut panes_guard = panes.lock();
             for (pane_id, ctx) in panes_guard.iter_mut() {
@@ -749,11 +768,33 @@ impl PtyManager {
                     );
                     completed.push((pane_id.clone(), block));
                 }
+                // Agent idle timeout: no output for AGENT_IDLE_TIMEOUT while
+                // the machine still reports Working. The screen observer may
+                // have gone quiet (prompt scrolled out of the 12-row window),
+                // so fall back to a time-based Idle observation.
+                if ctx.agent_kind.is_some()
+                    && ctx.agent_state.stable() == AgentStatus::Working
+                    && ctx
+                        .last_stream_observed_at
+                        .map(|t| t.elapsed() >= AGENT_IDLE_TIMEOUT)
+                        .unwrap_or(false)
+                {
+                    if let Some(transition) =
+                        ctx.agent_state.observe(AgentObservation::Idle, Instant::now())
+                    {
+                        agent_idle.push(Self::agent_side_effect(pane_id, ctx, transition));
+                    }
+                }
             }
         }
         for (_pane_id, block) in completed {
             Self::contain_aggregator_panic("idle block callback", || {
                 sink.block_completed(&block);
+            });
+        }
+        for side in agent_idle {
+            Self::contain_aggregator_panic("agent idle callback", || {
+                Self::dispatch_side_effects(sink, vec![side]);
             });
         }
     }

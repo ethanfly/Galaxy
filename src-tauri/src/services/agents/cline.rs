@@ -2,9 +2,9 @@
 //! Paths differ by OS / editor (Code, Cursor, VSCodium).
 use std::path::{Path, PathBuf};
 
-use super::{message_text, mtime_ms, AgentAdapter, AgentAvailability, CancelToken};
 #[cfg(not(windows))]
 use super::home_dir;
+use super::{message_text, mtime_ms, AgentAdapter, AgentAvailability, CancelToken};
 use crate::core::models::{AgentConversation, AgentKind, AgentMessage, AgentStatus};
 
 pub struct ClineAdapter {
@@ -36,8 +36,19 @@ impl ClineAdapter {
         #[cfg(windows)]
         {
             if let Ok(appdata) = std::env::var("APPDATA") {
-                for app in ["Code", "Code - Insiders", "Cursor", "VSCodium", "Code - OSS"] {
-                    roots.push(PathBuf::from(&appdata).join(app).join("User").join("globalStorage"));
+                for app in [
+                    "Code",
+                    "Code - Insiders",
+                    "Cursor",
+                    "VSCodium",
+                    "Code - OSS",
+                ] {
+                    roots.push(
+                        PathBuf::from(&appdata)
+                            .join(app)
+                            .join("User")
+                            .join("globalStorage"),
+                    );
                 }
             }
         }
@@ -54,7 +65,12 @@ impl ClineAdapter {
         {
             if let Some(h) = home_dir() {
                 for app in ["Code", "Cursor", "VSCodium", "Code - OSS"] {
-                    roots.push(h.join(".config").join(app).join("User").join("globalStorage"));
+                    roots.push(
+                        h.join(".config")
+                            .join(app)
+                            .join("User")
+                            .join("globalStorage"),
+                    );
                 }
             }
         }
@@ -123,7 +139,9 @@ impl AgentAdapter for ClineAdapter {
             .to_lowercase();
         let mut out = Vec::new();
         for tasks in self.task_dirs() {
-            let Ok(rd) = std::fs::read_dir(&tasks) else { continue };
+            let Ok(rd) = std::fs::read_dir(&tasks) else {
+                continue;
+            };
             for entry in rd.flatten() {
                 if cancel.load(std::sync::atomic::Ordering::SeqCst) {
                     return out;

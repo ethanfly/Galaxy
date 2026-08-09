@@ -1,7 +1,10 @@
 //! OMP: `~/.omp/agent/sessions/<sanitized-cwd>/<timestamp>_<uuid>.jsonl` (§5.4).
 use std::path::PathBuf;
 
-use super::{home_dir, message_text, mtime_ms, path_matches, read_jsonl, AgentAdapter, AgentAvailability, CancelToken};
+use super::{
+    home_dir, message_text, mtime_ms, path_matches, read_jsonl, AgentAdapter, AgentAvailability,
+    CancelToken,
+};
 use crate::core::models::{AgentConversation, AgentKind, AgentMessage, AgentStatus};
 
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -21,7 +24,11 @@ impl AgentAdapter for OmpAdapter {
 
     fn availability(&self) -> AgentAvailability {
         match Self::base() {
-            Some(p) if p.is_dir() => AgentAvailability { kind: Some(self.kind()), available: true, reason: String::new() },
+            Some(p) if p.is_dir() => AgentAvailability {
+                kind: Some(self.kind()),
+                available: true,
+                reason: String::new(),
+            },
             _ => AgentAvailability {
                 kind: Some(self.kind()),
                 available: false,
@@ -30,13 +37,23 @@ impl AgentAdapter for OmpAdapter {
         }
     }
 
-    fn scan(&self, project_path: &str, since_ms: u64, cancel: &CancelToken) -> Vec<AgentConversation> {
-        let Some(base) = Self::base() else { return Vec::new() };
+    fn scan(
+        &self,
+        project_path: &str,
+        since_ms: u64,
+        cancel: &CancelToken,
+    ) -> Vec<AgentConversation> {
+        let Some(base) = Self::base() else {
+            return Vec::new();
+        };
         let sanitized = super::sanitize_cwd(project_path);
-        let mut dirs: Vec<PathBuf> = [base.join(&sanitized), base.join(sanitized.trim_start_matches('-'))]
-            .into_iter()
-            .filter(|p| p.is_dir())
-            .collect();
+        let mut dirs: Vec<PathBuf> = [
+            base.join(&sanitized),
+            base.join(sanitized.trim_start_matches('-')),
+        ]
+        .into_iter()
+        .filter(|p| p.is_dir())
+        .collect();
         if dirs.is_empty() {
             if let Ok(rd) = std::fs::read_dir(&base) {
                 for e in rd.flatten() {
@@ -48,7 +65,9 @@ impl AgentAdapter for OmpAdapter {
         }
         let mut out = Vec::new();
         for dir in dirs {
-            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
             for entry in rd.flatten() {
                 if cancel.load(std::sync::atomic::Ordering::SeqCst) {
                     return out;
@@ -65,7 +84,11 @@ impl AgentAdapter for OmpAdapter {
                     None => continue,
                 };
                 // <timestamp>_<uuid>
-                let uuid = stem.rsplit_once('_').map(|(_, u)| u).unwrap_or(&stem).to_string();
+                let uuid = stem
+                    .rsplit_once('_')
+                    .map(|(_, u)| u)
+                    .unwrap_or(&stem)
+                    .to_string();
                 let lines = read_jsonl(&path, MAX_FILE_BYTES);
                 if lines.is_empty() {
                     continue;
@@ -76,7 +99,9 @@ impl AgentAdapter for OmpAdapter {
                         v.pointer("/session/cwd")
                             .and_then(|c| c.as_str())
                             .map(String::from)
-                            .or_else(|| v.pointer("/cwd").and_then(|c| c.as_str()).map(String::from))
+                            .or_else(|| {
+                                v.pointer("/cwd").and_then(|c| c.as_str()).map(String::from)
+                            })
                     })
                     .unwrap_or_default();
                 if !cwd.is_empty() && !path_matches(project_path, &cwd) {
@@ -87,10 +112,11 @@ impl AgentAdapter for OmpAdapter {
                     .find_map(message_text)
                     .map(|t: String| t.chars().take(160).collect())
                     .unwrap_or_else(|| "OMP 会话".into());
-                let last_ts = lines
-                    .iter()
-                    .rev()
-                    .find_map(|v| v.get("timestamp").and_then(|t| t.as_str()).map(String::from));
+                let last_ts = lines.iter().rev().find_map(|v| {
+                    v.get("timestamp")
+                        .and_then(|t| t.as_str())
+                        .map(String::from)
+                });
                 out.push(AgentConversation {
                     agent_kind: AgentKind::Omp,
                     external_id: uuid.clone(),
@@ -117,13 +143,22 @@ impl AgentAdapter for OmpAdapter {
                     .get("role")
                     .and_then(|r| r.as_str())
                     .or_else(|| v.get("type").and_then(|t| t.as_str()))
-                    .map(|r| if r.contains("user") { "user" } else { "assistant" })
+                    .map(|r| {
+                        if r.contains("user") {
+                            "user"
+                        } else {
+                            "assistant"
+                        }
+                    })
                     .unwrap_or(if i % 2 == 0 { "user" } else { "assistant" })
                     .to_string();
                 Some(AgentMessage {
                     role,
                     text,
-                    at: v.get("timestamp").and_then(|t| t.as_str()).map(String::from),
+                    at: v
+                        .get("timestamp")
+                        .and_then(|t| t.as_str())
+                        .map(String::from),
                 })
             })
             .collect();

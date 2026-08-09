@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import type { ShellProfile } from "../ipc/types";
 import { sortSessions, useAppStore } from "./appStore";
+import { useTerminalStore } from "./terminalStore";
 
 type ProfilesListFn = () => Promise<ShellProfile[]>;
 
@@ -29,7 +30,17 @@ const ipcMocks = vi.hoisted(() => {
         projectId: "p1",
         title: "终端 1",
         sortOrder: 1,
-        layout: { pane: null },
+        layout: {
+          pane: {
+            id: "pane-1",
+            cwd: "C:\\proj",
+            profile: { id: "pwsh", name: "pwsh", program: "pwsh", args: [], icon: null, env: {}, source: "detected" },
+            cols: 80,
+            rows: 24,
+            title: "终端 1",
+            active: true,
+          },
+        },
         syncInput: false,
         createdAt: "2026-01-01T00:00:01Z",
       },
@@ -74,6 +85,7 @@ const ipcMocks = vi.hoisted(() => {
       { id: "n1", at: "2026-01-01T00:00:00Z", title: "t", body: "b", read: false },
     ]),
     systemPendingOpenHere: vi.fn(async () => ["C:\\open-here"]),
+    sessionClose: vi.fn(async () => {}),
     workspaceRestore: vi.fn(
       () =>
         new Promise<number>((resolve) => {
@@ -223,5 +235,48 @@ describe("sortSessions", () => {
       mk("c", 0, "2026-01-01T00:00:03Z"),
     ]);
     expect(sorted.map((s: { id: string }) => s.id)).toEqual(["c", "a", "b"]);
+  });
+});
+
+describe("closeSession", () => {
+  beforeEach(reset);
+
+  it("clears runtime terminal state for the closed session's panes and focus", async () => {
+    await useAppStore.getState().init();
+    ipcMocks.finishRestore(1);
+    await Promise.resolve();
+
+    // Seed runtime state: a pane under s1 plus a session-level focus entry.
+    useTerminalStore.setState({
+      focusedPane: { s1: "pane-1", s2: "pane-2" },
+      lastSeq: { "pane-1": 42 },
+      agentStatus: { "pane-1": { kind: "claudeCode", status: "working" } },
+    });
+
+    await useAppStore.getState().closeSession("s1");
+
+    const ts = useTerminalStore.getState();
+    expect(ts.focusedPane.s1).toBeUndefined();
+    // Other sessions' focus entries are untouched.
+    expect(ts.focusedPane.s2).toBe("pane-2");
+    expect(ts.lastSeq["pane-1"]).toBeUndefined();
+    expect(ts.agentStatus["pane-1"]).toBeUndefined();
+    expect(useAppStore.getState().sessions.map((s) => s.id)).toEqual(["s2"]);
+    expect(useAppStore.getState().currentSessionId).toBe("s2");
+  });
+
+  it("keeps currentSessionId when closing a non-current session", async () => {
+    await useAppStore.getState().init();
+    ipcMocks.finishRestore(1);
+    await Promise.resolve();
+    useAppStore.getState().selectSession("s1");
+
+    useTerminalStore.setState({ focusedPane: { s1: "pane-1", s2: "pane-2" } });
+    await useAppStore.getState().closeSession("s2");
+
+    expect(useAppStore.getState().sessions.map((s) => s.id)).toEqual(["s1"]);
+    expect(useAppStore.getState().currentSessionId).toBe("s1");
+    expect(useTerminalStore.getState().focusedPane.s2).toBeUndefined();
+    expect(useTerminalStore.getState().focusedPane.s1).toBe("pane-1");
   });
 });

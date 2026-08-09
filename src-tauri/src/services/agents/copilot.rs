@@ -43,8 +43,12 @@ impl AgentAdapter for CopilotAdapter {
         since_ms: u64,
         cancel: &CancelToken,
     ) -> Vec<AgentConversation> {
-        let Some(base) = Self::base() else { return Vec::new() };
-        let Ok(rd) = std::fs::read_dir(&base) else { return Vec::new() };
+        let Some(base) = Self::base() else {
+            return Vec::new();
+        };
+        let Ok(rd) = std::fs::read_dir(&base) else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
         let leaf = project_path
             .trim_end_matches(['\\', '/'])
@@ -78,7 +82,10 @@ impl AgentAdapter for CopilotAdapter {
                 if since_ms > 0 && mtime_ms(&file) < since_ms {
                     continue;
                 }
-                let name = file.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let name = file
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 let is_session = name.ends_with(".jsonl")
                     || name.ends_with(".json")
                     || name.ends_with(".yml")

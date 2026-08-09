@@ -184,6 +184,16 @@ function PaneCell({ pane, session }: { pane: Pane; session: Session }) {
 
   const doClose = async () => {
     await paneClose(pane.id);
+    useTerminalStore.getState().resetPane(pane.id);
+    // The closed pane may have been the focused one — drop the stale
+    // session-level focus entry so the next dispatch cannot target a
+    // pane that no longer exists.
+    const cur = useTerminalStore.getState();
+    if (cur.focusedPane[session.id] === pane.id) {
+      const next = { ...cur.focusedPane };
+      delete next[session.id];
+      useTerminalStore.setState({ focusedPane: next });
+    }
     await useAppStore.getState().refreshSessions();
   };
 

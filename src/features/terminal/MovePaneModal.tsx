@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { paneMoveToSession } from "../../shared/ipc/client";
 import { useAppStore } from "../../shared/stores/appStore";
+import { useTerminalStore } from "../../shared/stores/terminalStore";
 import { useUiStore } from "../../shared/stores/uiStore";
 import { Modal } from "../../shared/components/Modal";
 
@@ -31,6 +32,19 @@ export function MovePaneModal() {
               setError(null);
               try {
                 await paneMoveToSession(movePaneId, s.id);
+                // The pane left its source session — drop the stale focus
+                // entry so shortcuts cannot target a pane that no longer
+                // lives there. Do this before refreshSessions: if the
+                // refresh throws, the stale entry must not survive to let
+                // pane.close target a pane now owned by another session.
+                if (currentSessionId) {
+                  const ts = useTerminalStore.getState();
+                  if (ts.focusedPane[currentSessionId] === movePaneId) {
+                    const next = { ...ts.focusedPane };
+                    delete next[currentSessionId];
+                    useTerminalStore.setState({ focusedPane: next });
+                  }
+                }
                 await useAppStore.getState().refreshSessions();
                 close();
               } catch (e) {

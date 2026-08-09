@@ -30,13 +30,17 @@ fn run_git(dir: &Path, args: &[&str]) -> Result<String, AppError> {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
-    let out = cmd
-        .output()
-        .map_err(|e| AppError::Git(format!("无法启动 git: {e}（请确认 git 已安装并在 PATH 中）")))?;
+    let out = cmd.output().map_err(|e| {
+        AppError::Git(format!(
+            "无法启动 git: {e}（请确认 git 已安装并在 PATH 中）"
+        ))
+    })?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).to_string())
     } else {
-        Err(AppError::Git(String::from_utf8_lossy(&out.stderr).trim().to_string()))
+        Err(AppError::Git(
+            String::from_utf8_lossy(&out.stderr).trim().to_string(),
+        ))
     }
 }
 
@@ -83,7 +87,10 @@ impl GitService {
 
     /// Fresh status read (also updates the per-project cache).
     pub fn status(&self, path: &Path) -> GitStatus {
-        let mut status = GitStatus { git_available: self.is_available(), ..Default::default() };
+        let mut status = GitStatus {
+            git_available: self.is_available(),
+            ..Default::default()
+        };
         if !self.is_available() || !self.is_repo(path) {
             return status;
         }
@@ -91,9 +98,16 @@ impl GitService {
 
         if let Ok(head) = run_git(path, &["rev-parse", "--abbrev-ref", "HEAD"]) {
             let b = head.trim();
-            status.branch = if b == "HEAD" { None } else { Some(b.to_string()) };
+            status.branch = if b == "HEAD" {
+                None
+            } else {
+                Some(b.to_string())
+            };
         }
-        if let Ok(counts) = run_git(path, &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"]) {
+        if let Ok(counts) = run_git(
+            path,
+            &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+        ) {
             let mut it = counts.split_whitespace();
             status.behind = it.next().and_then(|n| n.parse().ok()).unwrap_or(0);
             status.ahead = it.next().and_then(|n| n.parse().ok()).unwrap_or(0);
@@ -116,7 +130,10 @@ impl GitService {
     }
 
     pub fn branches(&self, path: &Path) -> Result<Vec<GitBranch>, AppError> {
-        let out = run_git(path, &["branch", "--format=%(refname:short) %(HEAD)", "--list"])?;
+        let out = run_git(
+            path,
+            &["branch", "--format=%(refname:short) %(HEAD)", "--list"],
+        )?;
         Ok(out
             .lines()
             .filter_map(|l| {
@@ -126,7 +143,11 @@ impl GitService {
                 }
                 let current = l.ends_with(" (HEAD)") || l.split_whitespace().nth(1) == Some("*");
                 let name = l.split_whitespace().next().unwrap_or("").to_string();
-                if name.is_empty() { None } else { Some(GitBranch { name, current }) }
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(GitBranch { name, current })
+                }
             })
             .collect())
     }
@@ -139,17 +160,23 @@ impl GitService {
         if !branches.iter().any(|b| b.name == branch) {
             return Err(AppError::Git(format!("分支不存在: {branch}")));
         }
-        run_git(path, &["checkout", branch]).map(|_| ()).map_err(|e| {
-            let msg = match e {
-                AppError::Git(m) => m,
-                other => other.to_string(),
-            };
-            AppError::Git(if msg.contains("would be overwritten") || msg.contains("Please commit") {
-                format!("切换分支可能与未提交改动冲突，请先提交或处理工作区。\nGit 返回: {msg}")
-            } else {
-                msg
+        run_git(path, &["checkout", branch])
+            .map(|_| ())
+            .map_err(|e| {
+                let msg = match e {
+                    AppError::Git(m) => m,
+                    other => other.to_string(),
+                };
+                AppError::Git(
+                    if msg.contains("would be overwritten") || msg.contains("Please commit") {
+                        format!(
+                            "切换分支可能与未提交改动冲突，请先提交或处理工作区。\nGit 返回: {msg}"
+                        )
+                    } else {
+                        msg
+                    },
+                )
             })
-        })
     }
 
     /// Watch `.git` for changes; callback receives the project path. Watchers
@@ -195,7 +222,9 @@ impl GitService {
     }
 
     pub fn unwatch(&self, path: &Path) {
-        self.watchers.lock().remove(&path.to_string_lossy().to_string());
+        self.watchers
+            .lock()
+            .remove(&path.to_string_lossy().to_string());
     }
 }
 
@@ -218,7 +247,11 @@ fn parse_porcelain(raw: &str) -> Vec<GitFileChange> {
                 (c, _) if c != ' ' => (c.to_string(), true),
                 _ => return None,
             };
-            Some(GitFileChange { path, status, staged })
+            Some(GitFileChange {
+                path,
+                status,
+                staged,
+            })
         })
         .collect()
 }

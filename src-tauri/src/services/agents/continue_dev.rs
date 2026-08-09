@@ -18,7 +18,11 @@ impl ContinueAdapter {
             out.push(h.join(".continue").join("sessions"));
             out.push(h.join(".continue"));
         }
-        out.push(PathBuf::from(project_path).join(".continue").join("sessions"));
+        out.push(
+            PathBuf::from(project_path)
+                .join(".continue")
+                .join("sessions"),
+        );
         out.push(PathBuf::from(project_path).join(".continue"));
         out
     }
@@ -61,7 +65,9 @@ impl AgentAdapter for ContinueAdapter {
             if !base.exists() {
                 continue;
             }
-            let Ok(rd) = std::fs::read_dir(&base) else { continue };
+            let Ok(rd) = std::fs::read_dir(&base) else {
+                continue;
+            };
             for entry in rd.flatten() {
                 if cancel.load(std::sync::atomic::Ordering::SeqCst) {
                     return out;
@@ -70,7 +76,10 @@ impl AgentAdapter for ContinueAdapter {
                 if path.is_dir() {
                     continue;
                 }
-                let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 if !(name.ends_with(".json") || name.ends_with(".jsonl")) {
                     continue;
                 }
@@ -153,7 +162,11 @@ impl AgentAdapter for ContinueAdapter {
             .rev()
             .filter_map(|v| {
                 Some(AgentMessage {
-                    role: v.get("role").and_then(|r| r.as_str()).unwrap_or("assistant").into(),
+                    role: v
+                        .get("role")
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("assistant")
+                        .into(),
                     text: message_text(v)?,
                     at: None,
                 })

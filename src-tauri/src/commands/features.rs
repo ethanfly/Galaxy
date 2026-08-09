@@ -13,9 +13,9 @@ use crate::core::models::{
 };
 use crate::core::workflow::{ResolvedWorkflow, Workflow};
 use crate::error::{AppError, CmdError, CmdResult, IntoCmd};
+use crate::services::agents::AgentAvailability;
 use crate::services::blocks::BlockListResult;
 use crate::services::insights::{aggregate, InsightsQuery, InsightsRange, InsightsSummary};
-use crate::services::agents::AgentAvailability;
 use crate::state::AppState;
 
 // ---------------------------------------------------------------- blocks
@@ -122,14 +122,15 @@ pub async fn agent_scan(
     // Default to full rescan: UI always replaces its list with the command
     // result, so incremental-only responses would hide prior history.
     let full = full.unwrap_or(true);
+    let cancel_for_scan = cancel.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         // catch_unwind so a single adapter bug cannot take down the whole app
         // when release uses panic=unwind (and never becomes a silent 闪退).
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if full {
-                state2.agents.scan_project_full(&path, &cancel)
+                state2.agents.scan_project_full(&path, &cancel_for_scan)
             } else {
-                state2.agents.scan_project(&path, &cancel)
+                state2.agents.scan_project(&path, &cancel_for_scan)
             }
         })) {
             Ok(r) => r,
@@ -141,7 +142,19 @@ pub async fn agent_scan(
     })
     .await
     .map_err(|e| CmdError::new("INTERNAL", format!("扫描任务失败: {e}")))?;
-    *state.scan_token.lock() = None;
+    // Clear the token only if it is still ours. A newer scan may have
+    // replaced it while this one was finishing; clearing unconditionally
+    // would orphan the new scan's token and make 取消 a no-op.
+    {
+        let mut guard = state.scan_token.lock();
+        if guard
+            .as_ref()
+            .map(|t| Arc::ptr_eq(t, &cancel))
+            .unwrap_or(false)
+        {
+            *guard = None;
+        }
+    }
     let _ = tauri::Emitter::emit(
         &state.app,
         crate::state::events::AGENT_SCAN_DONE,
@@ -150,7 +163,10 @@ pub async fn agent_scan(
             "count": result.0.len(),
         }),
     );
-    Ok(AgentScanResult { conversations: result.0, availability: result.1 })
+    Ok(AgentScanResult {
+        conversations: result.0,
+        availability: result.1,
+    })
 }
 
 #[tauri::command]
@@ -212,8 +228,10 @@ pub async fn agent_open_conversation(
         let cfg = state.store.read().config.clone();
         profiles
             .iter()
-            .find(|p| Some(&p.id) == project.default_profile_id.as_ref()
-                || Some(&p.id) == cfg.default_profile_id.as_ref())
+            .find(|p| {
+                Some(&p.id) == project.default_profile_id.as_ref()
+                    || Some(&p.id) == cfg.default_profile_id.as_ref()
+            })
             .or_else(|| profiles.first())
             .cloned()
             .ok_or_else(|| CmdError::new("INVALID_INPUT", "未检测到可用 Shell"))?
@@ -230,11 +248,7 @@ pub async fn agent_open_conversation(
         resume_command,
         injected: false,
     });
-    pane.title = conversation
-        .summary
-        .chars()
-        .take(24)
-        .collect::<String>();
+    pane.title = conversation.summary.chars().take(24).collect::<String>();
     let session = crate::core::models::Session {
         id: new_id(),
         project_id: project_id.clone(),
@@ -269,7 +283,10 @@ pub async fn agent_status_map(
 // ---------------------------------------------------------------- git
 
 #[tauri::command]
-pub async fn git_status(state: State<'_, Arc<AppState>>, project_id: String) -> CmdResult<GitStatus> {
+pub async fn git_status(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+) -> CmdResult<GitStatus> {
     let path = project_path(&state, &project_id)?;
     let state2 = state.inner().clone();
     let status = tauri::async_runtime::spawn_blocking(move || state2.git.status(&path))
@@ -313,7 +330,10 @@ pub async fn git_checkout(
 }
 
 #[tauri::command]
-pub async fn git_refresh(state: State<'_, Arc<AppState>>, project_id: String) -> CmdResult<GitStatus> {
+pub async fn git_refresh(
+    state: State<'_, Arc<AppState>>,
+    project_id: String,
+) -> CmdResult<GitStatus> {
     git_status(state, project_id).await
 }
 
@@ -366,12 +386,10 @@ pub async fn workflow_run(
     let state = state.inner().clone();
     let resolved = workflow_resolve_inner(&state, workflow_id, values, cwd.as_deref())?;
     let cmd = format!("{}\r", resolved.command);
-    tauri::async_runtime::spawn_blocking(move || {
-        state.pty().write_input(&target_pane_id, &cmd)
-    })
-    .await
-    .map_err(|e| CmdError::new("INTERNAL", format!("Workflow 执行失败: {e}")))?
-    .cmd()
+    tauri::async_runtime::spawn_blocking(move || state.pty().write_input(&target_pane_id, &cmd))
+        .await
+        .map_err(|e| CmdError::new("INTERNAL", format!("Workflow 执行失败: {e}")))?
+        .cmd()
 }
 
 fn workflow_resolve_inner(

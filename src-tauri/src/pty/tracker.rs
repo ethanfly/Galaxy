@@ -538,15 +538,53 @@ pub fn infer_historical_agent_status(kind: AgentKind, stripped_tail: &str) -> Ag
             "esc to interrupt",
             "working",
             "thinking",
-            "spinner",
             "running tool",
             "generating",
         ],
     };
-    if working_markers
-        .iter()
-        .any(|m| lower.contains(&m.to_lowercase()))
-    {
+    // Specific kinds keep substring matching — their status lines have a
+    // stable shape ("⠋ 1.2k tokens", "Press esc to interrupt"). The generic
+    // branch is line-anchored instead: a bare substring like "working"
+    // inside pasted file content (e.g. `cat` of a doc mentioning "working")
+    // must not flip a historical session to Working, so only lines that
+    // *start* with a status marker (after the leading spinner bullet) count.
+    let working = if matches!(
+        kind,
+        AgentKind::ClaudeCode
+            | AgentKind::Codex
+            | AgentKind::Gemini
+            | AgentKind::Aider
+    ) {
+        working_markers
+            .iter()
+            .any(|m| lower.contains(&m.to_lowercase()))
+    } else {
+        tail.lines().any(|line| {
+            let trimmed = line.trim_start();
+            let bullet_led = trimmed.starts_with(|c: char| {
+                matches!(
+                    c,
+                    '*' | '\u{2022}' | '\u{00b7}' | '\u{2219}' | '\u{25e6}'
+                ) || ('\u{2800}'..='\u{28ff}').contains(&c)
+            });
+            let body = if bullet_led {
+                // Skip the leading bullet char (may be multi-byte UTF-8).
+                let end = trimmed
+                    .char_indices()
+                    .nth(1)
+                    .map(|(i, _)| i)
+                    .unwrap_or(trimmed.len());
+                trimmed[end..].trim_start()
+            } else {
+                trimmed
+            };
+            let body_lower = body.to_lowercase();
+            working_markers
+                .iter()
+                .any(|m| body_lower.starts_with(&m.to_lowercase()))
+        })
+    };
+    if working {
         return AgentStatus::Working;
     }
 
@@ -675,6 +713,41 @@ mod tests {
         assert_eq!(
             infer_historical_agent_status(AgentKind::Codex, "❯"),
             AgentStatus::Idle
+        );
+    }
+
+    #[test]
+    fn generic_kind_historical_status_requires_anchored_markers() {
+        // Pasted file content mentioning "working" must not flip the session.
+        assert_eq!(
+            infer_historical_agent_status(
+                AgentKind::OpenCode,
+                "cat README.md\n# Working notes\nthis doc says working tree clean",
+            ),
+            AgentStatus::Idle
+        );
+        // Real status lines (bullet-led, marker at line start) still count.
+        assert_eq!(
+            infer_historical_agent_status(
+                AgentKind::OpenCode,
+                "* Working (1m 25s * esc to interrupt)",
+            ),
+            AgentStatus::Working
+        );
+        assert_eq!(
+            infer_historical_agent_status(
+                AgentKind::OpenCode,
+                "⠋ Thinking… (esc to interrupt)",
+            ),
+            AgentStatus::Working
+        );
+        // Specific kinds keep their substring behavior.
+        assert_eq!(
+            infer_historical_agent_status(
+                AgentKind::ClaudeCode,
+                "some output\n⠋ 1.2k tokens",
+            ),
+            AgentStatus::Working
         );
     }
 

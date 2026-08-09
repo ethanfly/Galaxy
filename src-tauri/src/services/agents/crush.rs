@@ -52,7 +52,12 @@ impl AgentAdapter for CrushAdapter {
         }
     }
 
-    fn scan(&self, project_path: &str, _since_ms: u64, _cancel: &CancelToken) -> Vec<AgentConversation> {
+    fn scan(
+        &self,
+        project_path: &str,
+        _since_ms: u64,
+        _cancel: &CancelToken,
+    ) -> Vec<AgentConversation> {
         let db_path = Self::db_for(project_path);
         if !db_path.is_file() {
             return Vec::new();
@@ -73,19 +78,30 @@ impl AgentAdapter for CrushAdapter {
         };
         let id_col = Self::pick(&cols, &["id", "session_id"]).unwrap_or_else(|| "id".into());
         let title_col = Self::pick(&cols, &["title", "name", "summary"]);
-        let time_col = Self::pick(&cols, &["updated_at", "created_at", "time_updated", "time_created"]);
+        let time_col = Self::pick(
+            &cols,
+            &["updated_at", "created_at", "time_updated", "time_created"],
+        );
 
         let has_title = title_col.is_some();
         let has_time = time_col.is_some();
         let sql = format!(
             "SELECT {id_col}{title_sel}{time_sel} FROM {table} ORDER BY {order} DESC LIMIT 100",
             id_col = id_col,
-            title_sel = title_col.as_ref().map(|c| format!(", {c}")).unwrap_or_default(),
-            time_sel = time_col.as_ref().map(|c| format!(", {c}")).unwrap_or_default(),
+            title_sel = title_col
+                .as_ref()
+                .map(|c| format!(", {c}"))
+                .unwrap_or_default(),
+            time_sel = time_col
+                .as_ref()
+                .map(|c| format!(", {c}"))
+                .unwrap_or_default(),
             table = table,
             order = time_col.clone().unwrap_or_else(|| id_col.clone()),
         );
-        let Ok(mut stmt) = conn.prepare(&sql) else { return Vec::new() };
+        let Ok(mut stmt) = conn.prepare(&sql) else {
+            return Vec::new();
+        };
         let rows = stmt
             .query_map([], |r| {
                 let id: String = r.get(0)?;
@@ -101,7 +117,9 @@ impl AgentAdapter for CrushAdapter {
                 agent_kind: AgentKind::Crush,
                 external_id: id.clone(),
                 project_path: project_path.to_string(),
-                summary: title.filter(|t| !t.is_empty()).unwrap_or_else(|| "Crush 会话".into()),
+                summary: title
+                    .filter(|t| !t.is_empty())
+                    .unwrap_or_else(|| "Crush 会话".into()),
                 last_message_at: at,
                 status: AgentStatus::Idle,
                 resume_command: format!("crush --session {id}"),
@@ -111,8 +129,12 @@ impl AgentAdapter for CrushAdapter {
     }
 
     fn read_messages(&self, conv: &AgentConversation, limit: usize) -> Vec<AgentMessage> {
-        let Some((db, session_id)) = conv.source.split_once("::") else { return Vec::new() };
-        let Some(conn) = Self::open(std::path::Path::new(db)) else { return Vec::new() };
+        let Some((db, session_id)) = conv.source.split_once("::") else {
+            return Vec::new();
+        };
+        let Some(conn) = Self::open(std::path::Path::new(db)) else {
+            return Vec::new();
+        };
         let cols = Self::columns(&conn, "messages");
         let (table, cols) = if cols.is_empty() {
             let cols = Self::columns(&conn, "message");
@@ -123,9 +145,12 @@ impl AgentAdapter for CrushAdapter {
         if cols.is_empty() {
             return Vec::new();
         }
-        let session_col = Self::pick(&cols, &["session_id", "sessionId"]).unwrap_or_else(|| "session_id".into());
+        let session_col =
+            Self::pick(&cols, &["session_id", "sessionId"]).unwrap_or_else(|| "session_id".into());
         let role_col = Self::pick(&cols, &["role", "author"]).unwrap_or_else(|| "role".into());
-        let Some(text_col) = Self::pick(&cols, &["content", "text", "body"]) else { return Vec::new() };
+        let Some(text_col) = Self::pick(&cols, &["content", "text", "body"]) else {
+            return Vec::new();
+        };
         let sql = format!(
             "SELECT {role_col}, {text_col} FROM {table} WHERE {session_col} = ?1 ORDER BY rowid DESC LIMIT ?2",
             role_col = role_col,
@@ -133,16 +158,25 @@ impl AgentAdapter for CrushAdapter {
             table = table,
             session_col = session_col,
         );
-        let Ok(mut stmt) = conn.prepare(&sql) else { return Vec::new() };
+        let Ok(mut stmt) = conn.prepare(&sql) else {
+            return Vec::new();
+        };
         let rows = stmt
             .query_map(rusqlite::params![session_id, limit as i64], |r| {
-                Ok((r.get::<_, String>(0).unwrap_or_default(), r.get::<_, String>(1).unwrap_or_default()))
+                Ok((
+                    r.get::<_, String>(0).unwrap_or_default(),
+                    r.get::<_, String>(1).unwrap_or_default(),
+                ))
             })
             .ok();
         let Some(rows) = rows else { return Vec::new() };
         let mut msgs: Vec<AgentMessage> = rows
             .flatten()
-            .map(|(role, text)| AgentMessage { role, text, at: None })
+            .map(|(role, text)| AgentMessage {
+                role,
+                text,
+                at: None,
+            })
             .collect();
         msgs.reverse();
         msgs
@@ -172,7 +206,11 @@ mod tests {
         )
         .unwrap();
         drop(conn);
-        let found = CrushAdapter.scan(proj.to_str().unwrap(), 0, &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
+        let found = CrushAdapter.scan(
+            proj.to_str().unwrap(),
+            0,
+            &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        );
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].external_id, "s1");
         assert!(found[0].resume_command.contains("crush --session s1"));

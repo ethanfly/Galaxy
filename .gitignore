@@ -9,3 +9,4 @@ test-results/
 .e2e-artifacts/
 local-scripts/
 .superpowers/
+.reasonix/

@@ -200,11 +200,28 @@ fn is_working_line(kind: AgentKind, line: &str) -> bool {
                 || lower.starts_with("scanning repo")
         }
         _ => {
-            lower.contains("esc to interrupt")
-                || lower.starts_with("working")
-                || lower.starts_with("thinking")
-                || lower.starts_with("running tool")
-                || lower.starts_with("generating")
+            // Agent TUIs render their status line with a leading spinner
+            // bullet (⠋ / * / • / ·). Requiring it here keeps plain shell
+            // output like "working tree clean" (git status) or
+            // "generating report..." from being misread as agent activity.
+            // The braille block (U+2800..U+28FF) covers every spinner frame
+            // (⠋⠙⠹⠸⠼⠴⠦⠧⠇…), not just one codepoint — a 250ms
+            // sampler must hit a frame on most ticks or the status would
+            // flap between Working and Idle.
+            let bullet_led = line
+                .trim_start()
+                .starts_with(|c: char| {
+                    matches!(
+                        c,
+                        '*' | '\u{2022}' | '\u{00b7}' | '\u{2219}' | '\u{25e6}'
+                    ) || ('\u{2800}'..='\u{28ff}').contains(&c)
+                });
+            bullet_led
+                && (lower.contains("esc to interrupt")
+                    || lower.starts_with("working")
+                    || lower.starts_with("thinking")
+                    || lower.starts_with("running tool")
+                    || lower.starts_with("generating"))
         }
     }
 }
@@ -305,6 +322,38 @@ mod tests {
             infer_stream_observation(AgentKind::Codex, "* Working (1m 25s * esc to interrupt)"),
             AgentObservation::Working
         );
+    }
+
+    #[test]
+    fn generic_kind_requires_bullet_led_status_line() {
+        // Plain shell output must never be read as agent activity.
+        for line in [
+            "working tree clean",
+            "working directory: C:\\repo",
+            "generating report...",
+            "thinking about the design",
+            "running tool checks",
+            "esc to interrupt",
+        ] {
+            assert_eq!(
+                infer_stream_observation(AgentKind::OpenCode, line),
+                AgentObservation::Unknown,
+                "plain line must not be Working: {line:?}"
+            );
+        }
+        // Real agent status lines carry a spinner bullet.
+        for line in [
+            "* Working (1m 25s * esc to interrupt)",
+            "\u{280b} Thinking\u{2026} (esc to interrupt)",
+            "\u{2022} Running tool: grep",
+            "* Generating plan...",
+        ] {
+            assert_eq!(
+                infer_stream_observation(AgentKind::OpenCode, line),
+                AgentObservation::Working,
+                "bullet-led status line must be Working: {line:?}"
+            );
+        }
     }
 
     #[test]

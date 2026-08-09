@@ -2,7 +2,10 @@
 //! (`summary.json` + `chat_history.jsonl`) (§5.4).
 use std::path::PathBuf;
 
-use super::{home_dir, message_text, mtime_ms, path_matches, read_jsonl, AgentAdapter, AgentAvailability, CancelToken};
+use super::{
+    home_dir, message_text, mtime_ms, path_matches, read_jsonl, AgentAdapter, AgentAvailability,
+    CancelToken,
+};
 use crate::core::models::{AgentConversation, AgentKind, AgentMessage, AgentStatus};
 
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -49,7 +52,11 @@ impl AgentAdapter for GrokAdapter {
 
     fn availability(&self) -> AgentAvailability {
         match Self::base() {
-            Some(p) if p.is_dir() => AgentAvailability { kind: Some(self.kind()), available: true, reason: String::new() },
+            Some(p) if p.is_dir() => AgentAvailability {
+                kind: Some(self.kind()),
+                available: true,
+                reason: String::new(),
+            },
             _ => AgentAvailability {
                 kind: Some(self.kind()),
                 available: false,
@@ -58,10 +65,19 @@ impl AgentAdapter for GrokAdapter {
         }
     }
 
-    fn scan(&self, project_path: &str, since_ms: u64, cancel: &CancelToken) -> Vec<AgentConversation> {
-        let Some(base) = Self::base() else { return Vec::new() };
+    fn scan(
+        &self,
+        project_path: &str,
+        since_ms: u64,
+        cancel: &CancelToken,
+    ) -> Vec<AgentConversation> {
+        let Some(base) = Self::base() else {
+            return Vec::new();
+        };
         let mut out = Vec::new();
-        let Ok(cwds) = std::fs::read_dir(&base) else { return out };
+        let Ok(cwds) = std::fs::read_dir(&base) else {
+            return out;
+        };
         for cwd_entry in cwds.flatten() {
             if cancel.load(std::sync::atomic::Ordering::SeqCst) {
                 return out;
@@ -71,7 +87,9 @@ impl AgentAdapter for GrokAdapter {
                 continue;
             }
             let decoded = Self::percent_decode(&cwd_entry.file_name().to_string_lossy());
-            let Ok(sessions) = std::fs::read_dir(&cwd_dir) else { continue };
+            let Ok(sessions) = std::fs::read_dir(&cwd_dir) else {
+                continue;
+            };
             for sess in sessions.flatten() {
                 let sess_dir = sess.path();
                 if !sess_dir.is_dir() {
@@ -88,8 +106,12 @@ impl AgentAdapter for GrokAdapter {
                 {
                     continue;
                 }
-                let Ok(raw) = std::fs::read_to_string(&summary_path) else { continue };
-                let Ok(summary) = serde_json::from_str::<serde_json::Value>(&raw) else { continue };
+                let Ok(raw) = std::fs::read_to_string(&summary_path) else {
+                    continue;
+                };
+                let Ok(summary) = serde_json::from_str::<serde_json::Value>(&raw) else {
+                    continue;
+                };
                 let cwd = summary
                     .pointer("/info/cwd")
                     .and_then(|c| c.as_str())
@@ -126,7 +148,11 @@ impl AgentAdapter for GrokAdapter {
                         read_jsonl(&history_path, MAX_FILE_BYTES)
                             .iter()
                             .rev()
-                            .find_map(|v| v.get("timestamp").and_then(|t| t.as_str()).map(String::from))
+                            .find_map(|v| {
+                                v.get("timestamp")
+                                    .and_then(|t| t.as_str())
+                                    .map(String::from)
+                            })
                     });
                 out.push(AgentConversation {
                     agent_kind: AgentKind::Grok,
@@ -156,9 +182,16 @@ impl AgentAdapter for GrokAdapter {
                     .unwrap_or("assistant")
                     .to_string();
                 Some(AgentMessage {
-                    role: if role.contains("user") { "user".into() } else { role },
+                    role: if role.contains("user") {
+                        "user".into()
+                    } else {
+                        role
+                    },
                     text,
-                    at: v.get("timestamp").and_then(|t| t.as_str()).map(String::from),
+                    at: v
+                        .get("timestamp")
+                        .and_then(|t| t.as_str())
+                        .map(String::from),
                 })
             })
             .collect();
@@ -179,7 +212,10 @@ mod tests {
 
     #[test]
     fn percent_decode_works() {
-        assert_eq!(GrokAdapter::percent_decode("C%3A%5Cwork%5Cproj"), "C:\\work\\proj");
+        assert_eq!(
+            GrokAdapter::percent_decode("C%3A%5Cwork%5Cproj"),
+            "C:\\work\\proj"
+        );
         assert_eq!(GrokAdapter::percent_decode("plain"), "plain");
     }
 }

@@ -539,9 +539,10 @@ pub fn refresh_profiles_in_background(state: Arc<AppState>) {
             let custom = state.store.read().config.custom_profiles.clone();
             let merged = crate::services::shell_detect::merge_custom_profiles(detected, &custom);
             *state.profiles.write() = merged;
-            let _ = state
-                .app
-                .emit(events::STORE_CHANGED, serde_json::json!({ "kind": "profiles" }));
+            let _ = state.app.emit(
+                events::STORE_CHANGED,
+                serde_json::json!({ "kind": "profiles" }),
+            );
             tracing::info!("后台 Shell 探测完成");
         })
         .ok();

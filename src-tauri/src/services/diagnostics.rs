@@ -48,10 +48,15 @@ impl Diagnostics {
         }
         md.push_str(&format!("- Git 可用: {}\n", i.git_available));
         md.push_str(&format!("- GPU 加速: {}\n", i.gpu_acceleration));
-        md.push_str(&format!("- 截图模式(CAPTURE_SCREEN): {}\n", i.captures_screen_mode));
+        md.push_str(&format!(
+            "- 截图模式(CAPTURE_SCREEN): {}\n",
+            i.captures_screen_mode
+        ));
         md.push_str(&format!("- Shell Profile 数量: {}\n", i.profile_count));
         md.push_str(&format!("- 功能开关: {}\n", i.feature_flags.join(", ")));
-        md.push_str("\n> 报告已自动脱敏：用户路径以 ~ 代替，不包含终端内容、命令参数或命令块输出。\n");
+        md.push_str(
+            "\n> 报告已自动脱敏：用户路径以 ~ 代替，不包含终端内容、命令参数或命令块输出。\n",
+        );
         md
     }
 }

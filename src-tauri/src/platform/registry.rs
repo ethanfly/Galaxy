@@ -18,9 +18,18 @@ const SCOPES: [&str; 3] = [
 /// background menu uses %V.
 fn targets(exe: &str) -> Vec<(String, String)> {
     vec![
-        (SCOPES[0].to_string(), format!("\"{exe}\" --open-here \"%1\"")),
-        (SCOPES[1].to_string(), format!("\"{exe}\" --open-here \"%V\"")),
-        (SCOPES[2].to_string(), format!("\"{exe}\" --open-here \"%1\"")),
+        (
+            SCOPES[0].to_string(),
+            format!("\"{exe}\" --open-here \"%1\""),
+        ),
+        (
+            SCOPES[1].to_string(),
+            format!("\"{exe}\" --open-here \"%V\""),
+        ),
+        (
+            SCOPES[2].to_string(),
+            format!("\"{exe}\" --open-here \"%1\""),
+        ),
     ]
 }
 
@@ -59,5 +68,6 @@ pub fn unregister_context_menu() -> Result<(), AppError> {
 
 pub fn is_registered() -> bool {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    hkcu.open_subkey(format!("{}\\{}", SCOPES[0], MENU_KEY)).is_ok()
+    hkcu.open_subkey(format!("{}\\{}", SCOPES[0], MENU_KEY))
+        .is_ok()
 }
