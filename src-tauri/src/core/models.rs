@@ -75,10 +75,12 @@ pub enum AgentKind {
     Antigravity,
     /// Amp / Factory CLI
     Amp,
+    /// Reasonix (DeepSeek coding agent)
+    Reasonix,
 }
 
 impl AgentKind {
-    pub const ALL: [AgentKind; 21] = [
+    pub const ALL: [AgentKind; 22] = [
         AgentKind::ClaudeCode,
         AgentKind::Codex,
         AgentKind::OpenCode,
@@ -100,6 +102,7 @@ impl AgentKind {
         AgentKind::OpenClaw,
         AgentKind::Antigravity,
         AgentKind::Amp,
+        AgentKind::Reasonix,
     ];
 
     pub fn id(self) -> &'static str {
@@ -125,6 +128,7 @@ impl AgentKind {
             AgentKind::OpenClaw => "openclaw",
             AgentKind::Antigravity => "antigravity",
             AgentKind::Amp => "amp",
+            AgentKind::Reasonix => "reasonix",
         }
     }
 
@@ -151,6 +155,7 @@ impl AgentKind {
             AgentKind::OpenClaw => "OpenClaw",
             AgentKind::Antigravity => "Antigravity",
             AgentKind::Amp => "Amp / Factory",
+            AgentKind::Reasonix => "Reasonix",
         }
     }
 }

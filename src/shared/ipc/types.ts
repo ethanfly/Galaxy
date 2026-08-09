@@ -87,7 +87,8 @@ export type AgentKind =
   | "hermes"
   | "openClaw"
   | "antigravity"
-  | "amp";
+  | "amp"
+  | "reasonix";
 
 export type AgentStatus = "idle" | "working" | "blocked" | "done";
 

@@ -23,6 +23,7 @@ const LABELS: Record<AgentKind, string> = {
   openClaw: "OW",
   antigravity: "AG",
   amp: "AM",
+  reasonix: "RX",
 };
 
 const NAMES: Record<AgentKind, string> = {
@@ -47,6 +48,7 @@ const NAMES: Record<AgentKind, string> = {
   openClaw: "OpenClaw",
   antigravity: "Antigravity",
   amp: "Amp / Factory",
+  reasonix: "Reasonix",
 };
 
 export function AgentBadge({ kind }: { kind: AgentKind }) {

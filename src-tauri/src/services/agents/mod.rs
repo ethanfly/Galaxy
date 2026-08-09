@@ -23,6 +23,7 @@ pub mod hermes;
 pub mod openclaw;
 pub mod antigravity;
 pub mod amp;
+pub mod reasonix;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -191,6 +192,7 @@ impl AgentRegistry {
                 Arc::new(openclaw::OpenClawAdapter),
                 Arc::new(antigravity::AntigravityAdapter),
                 Arc::new(amp::AmpAdapter),
+                Arc::new(reasonix::ReasonixAdapter),
             ],
             watermarks: Mutex::new(HashMap::new()),
             cache: Mutex::new(HashMap::new()),

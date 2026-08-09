@@ -439,6 +439,7 @@ pub fn detect_agent_kind(line: &str) -> Option<AgentKind> {
         "openclaw" | "clawdbot" | "clawd" => Some(AgentKind::OpenClaw),
         "antigravity" | "agy" => Some(AgentKind::Antigravity),
         "amp" | "factory" | "droid" => Some(AgentKind::Amp),
+        "reasonix" | "rx" => Some(AgentKind::Reasonix),
         // `npx @google/gemini-cli` / `npx @github/copilot` etc.
         "npx" | "pnpm" | "yarn" | "bunx" => {
             if second.contains("gemini") {
@@ -742,6 +743,8 @@ mod tests {
             Some(AgentKind::Antigravity)
         );
         assert_eq!(detect_agent_kind("amp"), Some(AgentKind::Amp));
+        assert_eq!(detect_agent_kind("reasonix"), Some(AgentKind::Reasonix));
+        assert_eq!(detect_agent_kind("rx"), Some(AgentKind::Reasonix));
         assert_eq!(
             detect_agent_kind("npx @google/gemini-cli"),
             Some(AgentKind::Gemini)
