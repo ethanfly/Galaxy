@@ -255,4 +255,90 @@ describe("terminalStore seq tracking", () => {
     unregisterTerminal("p1");
     unregisterTerminal("p2");
   });
+
+  it("rehydrates a re-created terminal from the ring (split / move remount)", async () => {
+    const firstWrite = vi.fn();
+    registerTerminal(mockHandle("p1", firstWrite));
+    useTerminalStore.getState().ingest([
+      { paneId: "p1", generation: 1, seq: 1, data: "h1" },
+      { paneId: "p1", generation: 1, seq: 2, data: "h2" },
+    ]);
+    expect(firstWrite.mock.calls).toEqual([
+      ["h1", 1, 1],
+      ["h2", 2, 1],
+    ]);
+    unregisterTerminal("p1");
+
+    // Pane remounts (split/move): a fresh instance must receive the history so
+    // TUI state (e.g. DEC mouse modes) survives.
+    const replaySpy = vi.fn();
+    ptyReplayMock.mockResolvedValueOnce({
+      paneId: "p1",
+      generation: 1,
+      truncated: false,
+      chunks: [
+        { paneId: "p1", generation: 1, seq: 2, data: "h2" },
+        { paneId: "p1", generation: 1, seq: 1, data: "h1" },
+      ],
+    });
+    registerTerminal(mockHandle("p1", vi.fn(), { replay: replaySpy }));
+
+    expect(ptyReplayMock).toHaveBeenCalledWith("p1", 0, 1);
+    await vi.waitFor(() => {
+      expect(replaySpy).toHaveBeenCalledWith([
+        { paneId: "p1", generation: 1, seq: 1, data: "h1" },
+        { paneId: "p1", generation: 1, seq: 2, data: "h2" },
+      ]);
+    });
+    unregisterTerminal("p1");
+  });
+
+  it("defers live output until rehydration finishes, then flushes in order", async () => {
+    const firstWrite = vi.fn();
+    registerTerminal(mockHandle("p1", firstWrite));
+    useTerminalStore
+      .getState()
+      .ingest([{ paneId: "p1", generation: 1, seq: 1, data: "h1" }]);
+    unregisterTerminal("p1");
+
+    let resolveReplay!: (value: {
+      paneId: string;
+      generation: number;
+      truncated: boolean;
+      chunks: PaneChunk[];
+    }) => void;
+    ptyReplayMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveReplay = resolve;
+        }),
+    );
+
+    const liveWrite = vi.fn();
+    const replaySpy = vi.fn();
+    registerTerminal(mockHandle("p1", liveWrite, { replay: replaySpy }));
+
+    // Live output arriving mid-hydration must wait for the history replay.
+    useTerminalStore
+      .getState()
+      .ingest([{ paneId: "p1", generation: 1, seq: 2, data: "live-2" }]);
+    await Promise.resolve();
+    expect(replaySpy).not.toHaveBeenCalled();
+    expect(liveWrite).not.toHaveBeenCalled();
+
+    resolveReplay({
+      paneId: "p1",
+      generation: 1,
+      truncated: false,
+      chunks: [{ paneId: "p1", generation: 1, seq: 1, data: "h1" }],
+    });
+    await vi.waitFor(() => {
+      expect(replaySpy).toHaveBeenCalledWith([
+        { paneId: "p1", generation: 1, seq: 1, data: "h1" },
+      ]);
+      expect(liveWrite.mock.calls).toEqual([["live-2", 2, 1]]);
+    });
+    expect(useTerminalStore.getState().lastSeq.p1).toBe(2);
+    unregisterTerminal("p1");
+  });
 });
