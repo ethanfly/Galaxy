@@ -24,12 +24,12 @@ npm run build
 npm run tauri build
 # → src-tauri/target/release/bundle/nsis/*-setup.exe
 
-# Frontend unit tests (Vitest, jsdom)
+# Frontend unit tests (Vitest jsdom + node --test icon gen tests)
 npm test
 npm run test:watch
 
-# TypeScript type check (no emit)
-npx tsc --noEmit
+# TypeScript type check (no emit; app/prod sources only, excludes tests)
+npm run typecheck
 
 # Rust tests (run from src-tauri/)
 cargo test --lib                              # unit tests
@@ -47,7 +47,7 @@ npm run version:show      # print current version
 npm run version:patch     # bump patch (syncs package.json + Cargo.toml + tauri.conf.json)
 ```
 
-CI runs on `windows-latest` with Node 22 and stable Rust (`x86_64-pc-windows-msvc`). The test workflow (`.github/workflows/test.yml`) runs `tsc --noEmit`, `npm test`, `npm run build`, and Playwright UI specs on every push/PR to `main`. Rust CI runs `cargo test --locked` from `src-tauri/`.
+CI runs on `windows-latest` with Node 22 and stable Rust (`x86_64-pc-windows-msvc`). The test workflow (`.github/workflows/test.yml`) runs `npm run typecheck`, `npm test`, `npm run build`, and Playwright UI specs on every push/PR to `main`. Rust CI runs `cargo test --locked` from `src-tauri/`.
 
 ## Architecture
 
@@ -95,7 +95,7 @@ Key architectural patterns:
 | Directory | Responsibility |
 |---|---|
 | `App.tsx` | Root: global IPC event wiring, layout composition |
-| `features/` | Feature modules: terminal, panels, search, settings, tabs, titlebar, statusbar, etc. |
+| `features/` | Feature modules: terminal, panels, search, settings, tabs, titlebar, statusbar, insights, workflow, recovery, shortcuts, navigation |
 | `shared/ipc/` | Typed IPC client (`client.ts`), event subscriptions (`events.ts`), shared types (`types.ts`) |
 | `shared/stores/` | Zustand stores: `appStore` (business cache), `terminalStore` (runtime), `uiStore` (UI state) |
 | `shared/i18n.ts` | zh-CN / en-US string switcher |
@@ -165,7 +165,7 @@ Frontend unit tests mock `../ipc/client` with `vi.mock` and provide async return
 
 ## Versioning and release
 
-Version is synchronized across three files: `package.json`, `src-tauri/Cargo.toml`, `tauri.conf.json`. Always use `scripts/bump-version.mjs` to bump — never edit versions manually across files.
+Version is synchronized across three files: `package.json`, `src-tauri/Cargo.toml`, `tauri.conf.json`. Always use `scripts/bump-version.mjs` to bump — never edit versions manually across files. Release pipeline details (signing, updater artifacts, visual regression harness) live in `docs/RELEASE.md`.
 
 **Every push to `main` automatically triggers a patch release.** The Version & Tag workflow also runs on plain pushes, bumps patch, tags, and builds. To push without releasing, start the commit subject with `[skip release]` (release-bot commits start with `chore(release):` and are also skipped). Do not hand-write `chore(release): vX.Y.Z` commits — that format is reserved for the bot.
 
