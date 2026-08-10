@@ -1,7 +1,7 @@
 //! Git service (spec §5.5). Git is always executed with an argument array —
 //! never by interpolating strings into an interactive shell. Destructive
 //! operations (stash/reset/clean) are never invoked automatically.
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -11,6 +11,7 @@ use parking_lot::Mutex;
 
 use crate::core::models::{GitBranch, GitFileChange, GitStatus};
 use crate::error::AppError;
+use crate::services::logging;
 
 pub struct GitService {
     /// Lazily probed on first use so cold start does not spawn `git --version`.
@@ -177,6 +178,24 @@ impl GitService {
                     },
                 )
             })
+    }
+
+    /// Register `.git` watchers for every project; idempotent. Watchers
+    /// receive the project id so stale branch/status can be refreshed.
+    pub fn watch_all(
+        &self,
+        projects: &[(String, PathBuf)],
+        on_change: Arc<dyn Fn(String) + Send + Sync>,
+    ) {
+        for (id, path) in projects {
+            if let Err(e) = self.watch_repo(path, id, on_change.clone()) {
+                tracing::warn!(
+                    "Git 目录监视失败 {}: {}",
+                    logging::redact(&path.to_string_lossy()),
+                    logging::redact(&e.to_string())
+                );
+            }
+        }
     }
 
     /// Watch `.git` for changes; callback receives the project path. Watchers

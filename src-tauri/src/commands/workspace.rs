@@ -162,6 +162,9 @@ pub async fn project_add(
     if let Some(mut project) = existing {
         project.last_accessed_at = now_rfc3339();
         project_update_internal(&state, &project)?;
+        // Re-arm the watcher (e.g. this project predates this run, so it was
+        // never watched: branch/status changes would go unnoticed).
+        watch_project_git_for(&state, &project);
         return Ok(project);
     }
     let project = Project {
@@ -182,24 +185,27 @@ pub async fn project_add(
     };
     state.store.write().projects.push(project.clone());
     state.persist().cmd()?;
-    // Start git watching if it's a repo; the callback only needs AppHandle.
-    {
-        let app_handle = state.app.clone();
-        let proj_path = PathBuf::from(&normalized);
-        let proj_id = project.id.clone();
-        let _ = state.git.watch_repo(
-            &proj_path,
-            &proj_id,
-            Arc::new(move |pid| {
-                let _ = tauri::Emitter::emit(
-                    &app_handle,
-                    crate::state::events::GIT_CHANGED,
-                    serde_json::json!({ "projectId": pid }),
-                );
-            }),
-        );
-    }
+    watch_project_git_for(&state, &project);
     Ok(project)
+}
+
+/// Arm the `.git` watcher for one project; the callback emits `git://changed`.
+/// Idempotent — re-watching an already-watched project is a no-op.
+fn watch_project_git_for(state: &State<Arc<AppState>>, project: &Project) {
+    let app_handle = state.app.clone();
+    let proj_path = PathBuf::from(&project.path);
+    let proj_id = project.id.clone();
+    let _ = state.git.watch_repo(
+        &proj_path,
+        &proj_id,
+        Arc::new(move |pid| {
+            let _ = tauri::Emitter::emit(
+                &app_handle,
+                crate::state::events::GIT_CHANGED,
+                serde_json::json!({ "projectId": pid }),
+            );
+        }),
+    );
 }
 
 fn project_update_internal(state: &State<Arc<AppState>>, project: &Project) -> CmdResult<()> {

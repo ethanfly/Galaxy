@@ -69,6 +69,10 @@ pub fn run() {
         })?;
         app.manage(built.state.clone());
 
+        // Re-arm `.git` watchers for persisted projects (the status bar's
+        // branch/status refresh depends on git://changed events).
+        state::watch_project_git(&built.state);
+
         // Cold start --open-here: queue only. The UI drains via
         // system_pending_open_here after init. Emitting as well would create
         // a second terminal tab for the same Explorer right-click.

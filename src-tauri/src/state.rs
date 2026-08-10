@@ -442,6 +442,33 @@ fn init_tracing(log_dir: &Path) {
         .try_init();
 }
 
+/// Register `.git` watchers for every persisted project so branch/status
+/// changes (e.g. `git checkout` in a pane) refresh the UI, not just for
+/// projects added during this run.
+pub fn watch_project_git(state: &AppState) {
+    let projects: Vec<(String, PathBuf)> = state
+        .store
+        .read()
+        .projects
+        .iter()
+        .map(|p| (p.id.clone(), PathBuf::from(&p.path)))
+        .collect();
+    if projects.is_empty() {
+        return;
+    }
+    let app_handle = state.app.clone();
+    state.git.watch_all(
+        &projects,
+        Arc::new(move |pid| {
+            let _ = tauri::Emitter::emit(
+                &app_handle,
+                events::GIT_CHANGED,
+                serde_json::json!({ "projectId": pid }),
+            );
+        }),
+    );
+}
+
 /// Boot the full state from disk.
 pub fn build_state(app: AppHandle) -> Result<BuiltState, AppError> {
     let data_dir = app
